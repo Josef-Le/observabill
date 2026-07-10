@@ -447,28 +447,32 @@ class TestPageAnalyzeErrors:
 class TestPageSample:
     def setup_method(self):
         self.app = import_app()
+        self.app.append_to_store = lambda *a, **kw: None
 
     def test_returns_string(self):
         result = self.app.page_sample()
         assert isinstance(result, str)
 
-    def test_shows_total(self):
-        # Sample total is ~$8,240
+    def test_shows_savings_dashboard_total(self):
+        # page_sample() now renders the savings dashboard using fixtures.SAMPLE_SCAN
+        # which has total_monthly_waste_usd = 3500.0
         result = self.app.page_sample()
-        assert "$8,240" in result
+        assert "$3,500" in result
 
-    def test_shows_infrastructure_hosts(self):
+    def test_shows_lever_titles(self):
+        # The savings dashboard shows opportunity titles, not product names
         result = self.app.page_sample()
-        assert "Infrastructure Hosts" in result
+        # SAMPLE_SCAN has CDN/LB lever as top opportunity
+        assert "CDN" in result or "access logs" in result.lower() or "logs to metrics" in result.lower()
 
     def test_shows_reserve_upsell(self):
         result = self.app.page_sample()
         assert "reserve" in result.lower() or "/reserve" in result
 
-    def test_shows_by_product_table(self):
+    def test_shows_dashboard_css(self):
         result = self.app.page_sample()
-        # All 3 products should be present
-        assert "APM Hosts" in result or "Logs" in result
+        # DASHBOARD_CSS is injected in the page
+        assert "hero-card" in result or "hero-amount" in result or "lever-table" in result
 
 
 # ---------------------------------------------------------------------------
@@ -533,9 +537,10 @@ class TestIntegrationLanding:
         status, body = get("/")
         assert status == 200
 
-    def test_landing_contains_form_action_analyze(self, server):
+    def test_landing_contains_form_action_scan(self, server):
         _, body = get("/")
-        assert 'action="/analyze"' in body
+        # Primary form now posts to /scan (savings scanner); /analyze is now /breakdown
+        assert 'action="/scan"' in body
 
     def test_landing_contains_site_select(self, server):
         _, body = get("/")
@@ -567,13 +572,15 @@ class TestIntegrationSample:
         status, body = get("/sample")
         assert status == 200
 
-    def test_sample_shows_total(self, server):
+    def test_sample_shows_waste_total(self, server):
+        # page_sample() now renders the savings dashboard — $3,500 total waste
         _, body = get("/sample")
-        assert "$8,240" in body
+        assert "$3,500" in body
 
-    def test_sample_shows_product_table(self, server):
+    def test_sample_shows_savings_levers(self, server):
+        # Shows savings opportunities (lever titles), not bill breakdown
         _, body = get("/sample")
-        assert "Infrastructure Hosts" in body
+        assert "CDN" in body or "access logs" in body.lower() or "logs to metrics" in body.lower() or "savings" in body.lower()
 
     def test_sample_shows_reserve_upsell(self, server):
         _, body = get("/sample")

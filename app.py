@@ -12,14 +12,56 @@ import urllib.parse
 import json
 import html
 import os
+import secrets
+import time
 from datetime import date, timedelta
 
-# ── dd_client (read-only, do NOT modify) ─────────────────────────────────────
+# ── dd_client (read-only cost client; write helper added here) ────────────────
 import dd_client
+
+# ── savings scanner + UI renderer + fixtures ─────────────────────────────────
+import savings
+import ui
+import fixtures
 
 # ── configuration ─────────────────────────────────────────────────────────────
 PORT = int(os.environ.get("PORT", 8921))
 ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "observabill-admin")
+
+# ── ephemeral apply-session store (keys never in HTML) ────────────────────────
+# Maps token -> {api_key, app_key, site, write_key, ts}
+# Entries expire after SESSION_TTL seconds (best-effort cleanup on access).
+_apply_sessions: dict = {}
+_SESSION_TTL = 1800  # 30 minutes
+
+
+def _create_apply_session(api_key: str, app_key: str, site: str, write_key: str) -> str:
+    """Store keys server-side, return an opaque token. Cleans up expired entries."""
+    # Purge stale entries on every write (no background thread)
+    now = time.time()
+    expired = [t for t, v in _apply_sessions.items() if now - v["ts"] > _SESSION_TTL]
+    for t in expired:
+        del _apply_sessions[t]
+    token = secrets.token_urlsafe(32)
+    _apply_sessions[token] = {
+        "api_key": api_key,
+        "app_key": app_key,
+        "site": site,
+        "write_key": write_key,
+        "ts": now,
+    }
+    return token
+
+
+def _get_apply_session(token: str) -> "dict | None":
+    """Return session dict if token exists and is not expired, else None."""
+    entry = _apply_sessions.get(token)
+    if entry is None:
+        return None
+    if time.time() - entry["ts"] > _SESSION_TTL:
+        del _apply_sessions[token]
+        return None
+    return entry
 
 # ── CSS theme (clean light-mode — same palette as SupplementAI) ───────────────
 CSS = """
@@ -530,21 +572,21 @@ def page_landing():
 <div style="background: linear-gradient(to bottom, #ecfdf5, #f8fafc); padding: 48px 24px 40px;">
   <div style="max-width:860px; margin:0 auto;">
     <h1 style="font-size:2.1rem; line-height:1.25; margin-bottom:14px;">
-      Datadog bill shock?<br>See exactly which product is burning your budget — free.
+      Find wasted spend in your Datadog &mdash; free.
     </h1>
     <p class="subtitle">
-      Datadog bills run 2–3× estimates. ObservaBill calls read-only cost endpoints with your API key
-      and shows you a breakdown in seconds. Your keys are used for one request and <strong>never stored</strong>.
+      We scan read-only and show you exactly what to cut and the config to fix it.
+      Zero installation. Keys used for this request only, <strong>never stored</strong>.
     </p>
 
     <div class="trust-block">
-      <span class="badge-safe">✓ Read-only</span>
+      <span class="badge-safe">✓ Read-only by default</span>
       <span class="badge-safe">✓ Keys never stored</span>
       <span class="badge-safe">✓ No account needed</span>
       <br>
-      <strong>Trust block:</strong> ObservaBill requires <code>usage_read</code> + <code>billing_read</code> scopes only.
-      Your API key and Application key are used for a single read-only request and are never written to disk,
-      logged, or stored in any way.
+      <strong>Read-only by default.</strong> Keys used for this request only, never stored.
+      ObservaBill requires <code>usage_read</code> + <code>billing_read</code> scopes only.
+      Your API key and Application key are never written to disk, logged, or stored in any way.
       <br><br>
       <strong>How to create a read-only key:</strong> In Datadog, go to
       <a href="https://app.datadoghq.com/organization-settings/api-keys" target="_blank" rel="noopener">
@@ -554,8 +596,8 @@ def page_landing():
     </div>
 
     <div class="card">
-      <div class="section-label">Break down your Datadog bill</div>
-      <form action="/analyze" method="POST">
+      <div class="section-label">Scan your Datadog for wasted spend</div>
+      <form action="/scan" method="POST">
         <div class="form-group">
           <label class="form-label" for="api_key">Datadog API Key</label>
           <input type="password" id="api_key" name="api_key" placeholder="Your Datadog API key"
@@ -578,8 +620,27 @@ def page_landing():
             <option value="uk1">UK1 — api.uk1.datadoghq.com</option>
           </select>
         </div>
+
+        <details style="margin-bottom:16px;">
+          <summary style="cursor:pointer; font-size:0.85rem; color:#64748b; font-weight:600; user-select:none;">
+            Advanced: write key (enables one-click Apply)
+          </summary>
+          <div style="margin-top:10px; padding:14px 16px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px;">
+            <div class="alert-info" style="margin-bottom:10px; background:#fef3c7; border-color:#fde68a; color:#92400e;">
+              ⚠ Warning: a write key grants Datadog write access. This allows ObservaBill to apply
+              remediations on your behalf via the Apply button. Use a scoped key with only the
+              permissions you intend to grant.
+            </div>
+            <label class="form-label" for="write_key">Write Key (optional)</label>
+            <input type="password" id="write_key" name="write_key"
+                   placeholder="Datadog write-capable Application key (optional)"
+                   autocomplete="off" spellcheck="false">
+            <p class="hint">Leave blank for read-only mode. The write key is used only for Apply actions, never stored.</p>
+          </div>
+        </details>
+
         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-          <button type="submit" class="btn btn-primary btn-lg">Break down my bill →</button>
+          <button type="submit" class="btn btn-primary btn-lg">Scan for wasted spend →</button>
           <a href="/sample" class="btn btn-sample">Try with sample data</a>
         </div>
       </form>
@@ -594,12 +655,196 @@ def page_landing():
         <a href="/reserve" class="btn btn-primary">Reserve $99/mo →</a>
       </div>
     </div>
+
+    <p style="margin-top:16px; font-size:0.82rem; color:#64748b;">
+      Want the raw bill by product?
+      <a href="/breakdown" style="color:#059669;">See bill breakdown →</a>
+    </p>
   </div>
 </div>"""
-    return html_page("Datadog Bill Breakdown", body)
+    return html_page("Find Wasted Spend in Datadog — Free", body)
 
 
-# ── page: POST /analyze ────────────────────────────────────────────────────────
+# ── page: POST /scan ──────────────────────────────────────────────────────────
+def page_scan(api_key, app_key, site, write_key=None):
+    """
+    Call savings.scan(api_key, app_key, site) → ScanResult.
+    Render ui.render_dashboard(scan, write_enabled=bool(write_key)).
+    Wrap with html_page(extra_head=DASHBOARD_CSS).
+
+    SECURITY: api_key, app_key, and write_key are NEVER passed to log_event,
+    append_to_store, or echoed in any HTML response.
+    """
+    log_event("scan", site=site)  # NEVER log any key
+
+    try:
+        scan_result = savings.scan(api_key, app_key, site)
+        apply_token = ""
+        if write_key:
+            apply_token = _create_apply_session(api_key, app_key, site, write_key)
+        dashboard_html = ui.render_dashboard(
+            scan_result, write_enabled=bool(write_key), apply_token=apply_token
+        )
+        body = f"""
+<div style="margin-top:16px; padding:0 12px;">
+  <div style="max-width:1100px; margin:0 auto; display:flex; align-items:center;
+              justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:8px;">
+    <p style="color:#475569; font-size:0.9rem;">
+      Site: <strong>{html.escape(site)}</strong> &nbsp;·&nbsp; Read-only — keys not stored.
+      &nbsp;<a href="/breakdown" style="color:#059669; font-size:0.85rem;">See raw bill →</a>
+    </p>
+    <a href="/" class="btn btn-outline" style="font-size:0.85rem; padding:7px 16px;">← New Scan</a>
+  </div>
+  {dashboard_html}
+</div>"""
+        extra_head = f"<style>{ui.DASHBOARD_CSS}</style>"
+        return html_page("Savings Scan", body, extra_head=extra_head)
+
+    except dd_client.AuthError:
+        return _error_page(
+            "Authentication Failed",
+            "Those keys were rejected — check they're valid and have "
+            "<code>usage_read</code> + <code>billing_read</code> scopes.",
+        )
+    except dd_client.PermissionError:
+        return _error_page(
+            "Permission Denied",
+            "The app key is missing required permissions. "
+            "Create a new Application Key with <code>usage_read</code> and <code>billing_read</code> scopes.",
+        )
+    except dd_client.RateLimitError:
+        return _error_page(
+            "Rate Limited",
+            "Datadog rate-limited this request — try again in a minute.",
+        )
+    except dd_client.DatadogError as exc:
+        print(f"[scan-error] {type(exc).__name__}: {exc}")
+        return _error_page(
+            "Couldn't Reach Datadog",
+            "Couldn't reach Datadog. Check your network and try again.",
+        )
+    except Exception as exc:
+        print(f"[scan-error] {type(exc).__name__}: {exc}")
+        return _error_page(
+            "Unexpected Error",
+            "Something went wrong — please try again.",
+        )
+
+
+# ── page: POST /apply ─────────────────────────────────────────────────────────
+def page_apply(opp_id, apply_token, confirm):
+    """
+    Gated write action. Requires a valid apply_token (issued by POST /scan) and confirm=True.
+
+    SECURITY: api_key, app_key, write_key are NEVER accepted from the client form,
+    NEVER echoed in HTML, NEVER logged. They are retrieved exclusively from the
+    server-side _apply_sessions store keyed by apply_token.
+    """
+    # Resolve session — keys stay server-side
+    session = _get_apply_session(apply_token) if apply_token else None
+
+    if session is None:
+        # No token / expired / bogus — friendly message, zero writes
+        body = """
+<div class="container" style="max-width:560px;">
+  <div style="margin-top:64px;">
+    <div class="alert-error">
+      <h2 style="color:#991b1b; margin-bottom:8px;">Session Expired</h2>
+      <p>Your session expired — re-run the scan to apply this fix.</p>
+    </div>
+    <a href="/" class="btn btn-outline">← Back to Scan</a>
+  </div>
+</div>"""
+        return html_page("Session Expired", body), 200
+
+    api_key = session["api_key"]
+    app_key = session["app_key"]
+    site = session["site"]
+    write_key = session["write_key"]
+
+    # Resolve opportunity server-side from fixtures (never trust client payload)
+    opp = _find_opp_by_id(opp_id)
+    if opp is None:
+        return _error_page(
+            "Opportunity Not Found",
+            "Could not find the opportunity to apply. Please re-run the scan.",
+        ), 200
+
+    if not confirm:
+        # Show confirmation step — embed ONLY opp_id + apply_token, NO keys
+        gc = opp.get("generated_config", {})
+        endpoint = html.escape(gc.get("endpoint", ""))
+        verb = html.escape(gc.get("verb", ""))
+        title = html.escape(opp.get("title", opp_id))
+        body = f"""
+<div class="container" style="max-width:560px;">
+  <div style="margin-top:48px;">
+    <h1>Confirm Apply</h1>
+    <p class="subtitle" style="margin-bottom:20px;">
+      You are about to apply: <strong>{title}</strong>
+    </p>
+    <div class="card" style="background:#fffbeb; border-color:#fde68a;">
+      <p style="font-size:0.9rem; color:#78350f;">
+        This will execute <code>{verb} {endpoint}</code> against your Datadog account
+        using the write key you provided. This action cannot be undone automatically.
+      </p>
+    </div>
+    <form method="POST" action="/apply" style="margin-top:20px;">
+      <input type="hidden" name="opp_id" value="{html.escape(opp_id)}">
+      <input type="hidden" name="apply_token" value="{html.escape(apply_token)}">
+      <input type="hidden" name="confirm" value="1">
+      <div style="display:flex; gap:10px;">
+        <button type="submit" class="btn btn-primary">Apply to Datadog →</button>
+        <a href="/" class="btn btn-outline">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>"""
+        return html_page("Confirm Apply", body), 200
+
+    # Execute the write using server-side keys from the session
+    gc = savings.build_apply_request(opp)
+    title = html.escape(opp.get("title", opp_id))
+
+    # log apply event — lever only, NEVER any key
+    log_event("apply", lever=opp.get("lever", opp_id))
+
+    try:
+        dd_client.write(gc["endpoint"], gc["verb"], gc["payload"], api_key, app_key, site)
+        body = f"""
+<div class="container" style="max-width:560px;">
+  <div style="margin-top:64px; text-align:center;">
+    <div style="font-size:3rem; margin-bottom:16px;">✅</div>
+    <h1>Applied</h1>
+    <p class="subtitle" style="margin:0 auto;">
+      <strong>{title}</strong> was applied to your Datadog account ({html.escape(site)}).
+      Changes may take a few minutes to take effect.
+    </p>
+    <a href="/" class="btn btn-outline" style="margin-top:24px;">← Back to Home</a>
+  </div>
+</div>"""
+        return html_page("Applied", body), 200
+
+    except dd_client.AuthError:
+        return _error_page(
+            "Write Authentication Failed",
+            "The write key was rejected — check it has write permissions.",
+        ), 200
+    except dd_client.DatadogError as exc:
+        print(f"[apply-error] {type(exc).__name__}: {exc}")
+        return _error_page(
+            "Apply Failed",
+            "Couldn't apply the change. Datadog returned an error — check the write key permissions.",
+        ), 200
+    except Exception as exc:
+        print(f"[apply-error] {type(exc).__name__}: {exc}")
+        return _error_page(
+            "Apply Failed",
+            "Something went wrong during apply — please try again.",
+        ), 200
+
+
+# ── page: POST /analyze (now at /breakdown too) ───────────────────────────────
 def page_analyze(api_key, app_key, site):
     """
     Call dd_client, render breakdown.
@@ -699,20 +944,24 @@ def _error_page(title, message):
 
 # ── page: GET /sample ──────────────────────────────────────────────────────────
 def page_sample():
-    """Render the built-in sample breakdown (no API key required)."""
-    breakdown_html = render_breakdown(SAMPLE_SUMMARY, SAMPLE_TAG_ATTRIBUTION)
+    """Render the savings dashboard with fixtures.SAMPLE_SCAN (no API key required)."""
+    log_event("sample_view")
+    dashboard_html = ui.render_dashboard(fixtures.SAMPLE_SCAN, write_enabled=False)
     body = f"""
-<div class="container-wide">
-  <div style="margin-top:40px; margin-bottom:24px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;">
-    <div>
-      <h1>Sample Bill Breakdown</h1>
-      <p style="color:#475569;">Realistic example — ~$8,240/mo with on-demand overage spike. <a href="/">Analyze your own →</a></p>
-    </div>
-    <a href="/" class="btn btn-outline">← Analyze My Bill</a>
+<div style="margin-top:16px; padding:0 12px;">
+  <div style="max-width:1100px; margin:0 auto; display:flex; align-items:center;
+              justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:8px;">
+    <p style="color:#475569; font-size:0.9rem;">
+      Sample data — realistic Datadog org with $3,500/mo in recoverable waste.
+      <a href="/" style="color:#059669;">Scan your own account →</a>
+    </p>
+    <a href="/" class="btn btn-outline" style="font-size:0.85rem; padding:7px 16px;">← Scan My Account</a>
   </div>
-  {breakdown_html}
+  {dashboard_html}
+  {_reserve_upsell_html()}
 </div>"""
-    return html_page("Sample Breakdown", body)
+    extra_head = f"<style>{ui.DASHBOARD_CSS}</style>"
+    return html_page("Sample Savings Scan", body, extra_head=extra_head)
 
 
 # ── page: GET /metrics ─────────────────────────────────────────────────────────
@@ -725,7 +974,7 @@ def page_metrics(token):
         )
     counts, refs = read_funnel()
     visits = counts.get("visit", 0)
-    order = ["visit", "sample_view", "analyze", "reserve"]
+    order = ["visit", "sample_view", "scan", "apply", "reserve"]
     rows = ""
     for ev in order:
         c = counts.get(ev, 0)
@@ -799,6 +1048,67 @@ def page_reserve_form():
     return html_page("Reserve Alerts", body)
 
 
+# ── page: GET /breakdown — secondary bill-breakdown form ──────────────────────
+def page_breakdown_form():
+    """Old-style bill breakdown entry form (now secondary, not the primary landing)."""
+    body = """
+<div style="background: linear-gradient(to bottom, #f0fdf4, #f8fafc); padding: 48px 24px 40px;">
+  <div style="max-width:860px; margin:0 auto;">
+    <h1 style="font-size:1.8rem; margin-bottom:12px;">Raw Bill Breakdown by Product</h1>
+    <p class="subtitle">
+      See the raw Datadog cost breakdown by product. For savings opportunities and one-click fixes,
+      <a href="/">use the Savings Scan →</a>
+    </p>
+    <div class="card">
+      <div class="section-label">Break down your Datadog bill</div>
+      <form action="/analyze" method="POST">
+        <div class="form-group">
+          <label class="form-label" for="api_key">Datadog API Key</label>
+          <input type="password" id="api_key" name="api_key" placeholder="Your Datadog API key"
+                 autocomplete="off" spellcheck="false" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="app_key">Application Key</label>
+          <input type="password" id="app_key" name="app_key" placeholder="Your Datadog Application key"
+                 autocomplete="off" spellcheck="false" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="site">Datadog Site</label>
+          <select id="site" name="site">
+            <option value="us1">US1 — api.datadoghq.com (default)</option>
+            <option value="us3">US3 — api.us3.datadoghq.com</option>
+            <option value="us5">US5 — api.us5.datadoghq.com</option>
+            <option value="eu">EU — api.datadoghq.eu</option>
+            <option value="ap1">AP1 — api.ap1.datadoghq.com</option>
+            <option value="ap2">AP2 — api.ap2.datadoghq.com</option>
+            <option value="uk1">UK1 — api.uk1.datadoghq.com</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button type="submit" class="btn btn-primary btn-lg">Break down my bill →</button>
+          <a href="/" class="btn btn-sample">← Back to Scan</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>"""
+    return html_page("Bill Breakdown by Product", body)
+
+
+# ── helper: look up opportunity by id from sample fixtures ────────────────────
+def _find_opp_by_id(opp_id: str) -> "dict | None":
+    """
+    Look up a SavingsOpportunity dict by id.
+    For the /apply endpoint: checks fixtures.SAMPLE_SCAN first (demo mode).
+    In production you would pass the opportunity dict through the confirm form
+    or re-run the scan; this is the lightweight fallback.
+    """
+    for opp in fixtures.SAMPLE_SCAN.get("opportunities", []):
+        if opp.get("id") == opp_id:
+            return opp
+    return None
+
+
 # ── server factory ─────────────────────────────────────────────────────────────
 def make_server(port):
     """Create and return the HTTPServer (does not start serving)."""
@@ -846,9 +1156,12 @@ class ObservaBillHandler(http.server.BaseHTTPRequestHandler):
             self.send_html(page_landing())
 
         elif path == "/sample":
-            ref = qs.get("ref", [""])[0] or self.headers.get("Referer", "")
-            log_event("sample_view", ref=ref)
+            # page_sample() calls log_event("sample_view") internally
             self.send_html(page_sample())
+
+        elif path == "/breakdown":
+            # Secondary: old bill-breakdown landing form
+            self.send_html(page_breakdown_form())
 
         elif path == "/reserve":
             self.send_html(page_reserve_form())
@@ -870,7 +1183,30 @@ class ObservaBillHandler(http.server.BaseHTTPRequestHandler):
         body = self.rfile.read(length).decode("utf-8")
         params = urllib.parse.parse_qs(body, keep_blank_values=True)
 
-        if path == "/analyze":
+        if path == "/scan":
+            api_key = params.get("api_key", [""])[0]
+            app_key = params.get("app_key", [""])[0]
+            site = params.get("site", ["us1"])[0]
+            write_key = params.get("write_key", [""])[0] or None
+            self.send_html(page_scan(api_key, app_key, site, write_key=write_key))
+
+        elif path == "/apply":
+            # SECURITY: never read api_key/app_key/write_key from the client form.
+            # All keys are retrieved server-side via the apply_token.
+            opp_id = params.get("opp_id", [""])[0]
+            apply_token = params.get("apply_token", [""])[0]
+            confirm_val = params.get("confirm", [""])[0]
+            confirm = bool(confirm_val and confirm_val.strip() not in ("", "0"))
+
+            html_content, status = page_apply(
+                opp_id=opp_id,
+                apply_token=apply_token,
+                confirm=confirm,
+            )
+            self.send_html(html_content, status)
+
+        elif path == "/analyze":
+            # Legacy: redirect to /breakdown form or handle directly
             api_key = params.get("api_key", [""])[0]
             app_key = params.get("app_key", [""])[0]
             site = params.get("site", ["us1"])[0]

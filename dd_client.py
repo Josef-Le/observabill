@@ -404,3 +404,106 @@ def summarize(
         "delta_pct": delta_pct,
         "spike": spike,
     }
+
+
+# ---------------------------------------------------------------------------
+# Write helper — used by /apply endpoint
+# ---------------------------------------------------------------------------
+
+def _http_write(
+    url: str,
+    method: str,
+    headers: dict[str, str],
+    body: bytes,
+    timeout: int = 15,
+) -> tuple[int, dict, bytes]:
+    """Perform an HTTP write (PUT/PATCH/POST) with proxy bypass.
+
+    Module-level so tests can monkeypatch it without network access.
+
+    Returns
+    -------
+    (status_code, response_headers, body_bytes)
+    """
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    req = urllib.request.Request(url, data=body, headers=headers, method=method.upper())
+    try:
+        with opener.open(req, timeout=timeout) as resp:
+            return (resp.status, dict(resp.headers), resp.read())
+    except urllib.error.HTTPError as exc:
+        return (exc.code, dict(exc.headers), exc.read())
+
+
+def write(
+    path: str,
+    verb: str,
+    payload: dict,
+    api_key: str,
+    app_key: str,
+    site: str = "us1",
+) -> dict:
+    """Execute a write (PUT/PATCH/POST) against the Datadog API.
+
+    Parameters
+    ----------
+    path    : str  — API path, e.g. "/api/v1/logs/config/indexes/main"
+    verb    : str  — HTTP verb: "PUT", "PATCH", or "POST"
+    payload : dict — request body (serialised to JSON)
+    api_key : str  — Datadog API key (headers only, never logged)
+    app_key : str  — Datadog application key (headers only, never logged)
+    site    : str  — Datadog site identifier (default "us1")
+
+    Returns
+    -------
+    Parsed JSON dict on success (2xx).
+
+    Raises
+    ------
+    ValueError       if verb is not PUT, PATCH, or POST
+    AuthError        on 401
+    PermissionError  on 403
+    RateLimitError   on 429
+    DatadogError     on other non-2xx
+
+    SECURITY: api_key and app_key are sent only in headers, never embedded
+    in the URL, body, or exception messages.
+    """
+    allowed_verbs = {"PUT", "PATCH", "POST"}
+    v = verb.upper()
+    if v not in allowed_verbs:
+        raise ValueError(f"write() only supports {allowed_verbs}; got {verb!r}")
+
+    _base = base_url(site)
+    url = f"{_base}{path}"
+
+    headers = {
+        "DD-API-KEY": api_key,
+        "DD-APPLICATION-KEY": app_key,
+        "Content-Type": "application/json",
+    }
+    body_bytes = json.dumps(payload).encode("utf-8")
+
+    status, resp_headers, resp_body = _http_write(url, v, headers, body_bytes)
+
+    if 200 <= status < 300:
+        try:
+            return json.loads(resp_body)
+        except Exception:
+            return {}
+
+    # Map error codes — NEVER include api_key/app_key in messages
+    if status == 401:
+        raise AuthError(f"HTTP 401 Unauthorized from {path!r}")
+    if status == 403:
+        raise PermissionError(f"HTTP 403 Forbidden from {path!r}")
+    if status == 429:
+        reset_raw = resp_headers.get("X-RateLimit-Reset") or resp_headers.get("x-ratelimit-reset")
+        reset_seconds: int | None = None
+        if reset_raw is not None:
+            try:
+                reset_seconds = int(reset_raw)
+            except (ValueError, TypeError):
+                pass
+        raise RateLimitError(f"HTTP 429 Rate Limited on {path!r}", reset_seconds=reset_seconds)
+
+    raise DatadogError(f"HTTP {status} error from {path!r}")
