@@ -562,6 +562,171 @@ pre.config-body {
     padding: 10px 14px;
     margin-top: 12px;
 }
+.settings-price-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    margin-bottom: 16px;
+}
+.settings-price-badge-derived { background: var(--green-l);  color: var(--green-d); }
+.settings-price-badge-list    { background: var(--amber-l);  color: #92400e; }
+.settings-price-badge-custom  { background: var(--blue-l);   color: #1e40af; }
+.settings-price-input {
+    width: 100%;
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 0.92rem;
+    padding: 8px 12px;
+    outline: none;
+    margin-bottom: 12px;
+    font-variant-numeric: tabular-nums;
+}
+.settings-price-input:focus { border-color: var(--green); box-shadow: 0 0 0 3px #05966922; }
+
+/* Scope checklist card ---------------------------------------------------- */
+.scope-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin-bottom: 24px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.scope-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.scope-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #f1f5f9;
+    font-size: 0.87rem;
+}
+.scope-row:last-of-type { border-bottom: none; }
+.scope-icon-ok  { color: var(--green); font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+.scope-icon-err { color: #94a3b8;      font-size: 1rem; flex-shrink: 0; margin-top: 1px; }
+.scope-name {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--text);
+    min-width: 120px;
+    flex-shrink: 0;
+}
+.scope-desc { color: var(--text-2); flex: 1; font-size: 0.82rem; }
+.scope-unlock-note {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-left: 3px solid #f59e0b;
+    border-radius: 7px;
+    padding: 12px 16px;
+    margin-top: 14px;
+    font-size: 0.83rem;
+    color: #78350f;
+}
+.scope-unlock-note ul { margin: 6px 0 0 16px; padding: 0; }
+.scope-unlock-note li { margin-bottom: 4px; }
+.scope-key-guide {
+    margin-top: 12px;
+}
+.scope-key-guide summary {
+    cursor: pointer;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--blue);
+    user-select: none;
+    padding: 6px 0;
+}
+.scope-key-guide-body {
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-top: 8px;
+    font-size: 0.82rem;
+    color: var(--text-2);
+}
+.scope-key-guide-body ol { margin: 8px 0 0 18px; padding: 0; }
+.scope-key-guide-body li { margin-bottom: 6px; line-height: 1.55; }
+.scope-key-guide-body code {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.78rem;
+    background: #e2e8f0;
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--text);
+}
+.scope-all-ok {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--green-l);
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--green-d);
+    margin-top: 4px;
+}
+
+/* Detection query collapsible --------------------------------------------- */
+.detection-collapsible {
+    margin-top: 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.detection-collapsible summary {
+    cursor: pointer;
+    padding: 10px 14px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--slate);
+    background: #f8fafc;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.detection-collapsible summary:hover { background: #f1f5f9; }
+.detection-collapsible-body {
+    padding: 16px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+}
+pre.detection-query {
+    margin: 0 0 12px 0;
+    padding: 12px 14px;
+    background: #0f172a;
+    border-radius: 7px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.78rem;
+    line-height: 1.6;
+    color: #e2e8f0;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.detection-why {
+    font-size: 0.83rem;
+    color: var(--text-2);
+    line-height: 1.6;
+}
 
 /* Summary stats bar ------------------------------------------------------- */
 .stats-bar {
@@ -679,17 +844,91 @@ function copyConfig(id) {
 }
 
 // ── Settings panel ────────────────────────────────────────────────────────────
+// Default rates (must match Python _DEFAULTS in render_settings_panel)
+var _PRICE_DEFAULTS = {
+    'indexed_log_per_million': 0.0125,
+    'ingested_log_per_gb':     0.10,
+    'custom_metric_per_month': 0.05
+};
+
 function openSettings() {
     document.getElementById('settings-panel').classList.add('open');
     document.getElementById('settings-overlay').classList.add('open');
+    // Restore values from localStorage
+    var keys = ['indexed_log_per_million', 'ingested_log_per_gb', 'custom_metric_per_month'];
+    keys.forEach(function(k) {
+        var val = localStorage.getItem('price_' + k);
+        var el  = document.getElementById('sp-price_' + k);
+        if (el && val !== null) el.value = val;
+    });
 }
 function closeSettings() {
     document.getElementById('settings-panel').classList.remove('open');
     document.getElementById('settings-overlay').classList.remove('open');
 }
+function saveSettings() {
+    var keys = ['indexed_log_per_million', 'ingested_log_per_gb', 'custom_metric_per_month'];
+    var newRates = {};
+    keys.forEach(function(k) {
+        var el = document.getElementById('sp-price_' + k);
+        if (!el) return;
+        var v = parseFloat(el.value);
+        if (isNaN(v) || v <= 0) v = _PRICE_DEFAULTS[k];
+        newRates[k] = v;
+        localStorage.setItem('price_' + k, v);
+    });
+
+    // Client-side rescale: walk all [data-usd][data-price-key] elements
+    // and recompute displayed $ = data-usd * (new_rate / default_rate)
+    document.querySelectorAll('[data-usd][data-price-key]').forEach(function(el) {
+        var usd      = parseFloat(el.getAttribute('data-usd'));
+        var priceKey = el.getAttribute('data-price-key');
+        if (isNaN(usd)) return;
+
+        var newAmt;
+        if (priceKey === 'mixed' || !_PRICE_DEFAULTS[priceKey]) {
+            // Mixed / unknown: scale by indexed_log_per_million (dominant rate)
+            var defaultRate = _PRICE_DEFAULTS['indexed_log_per_million'];
+            var newRate     = newRates['indexed_log_per_million'] || defaultRate;
+            newAmt = usd * (newRate / defaultRate);
+        } else {
+            var defaultRate = _PRICE_DEFAULTS[priceKey];
+            var newRate     = newRates[priceKey] || defaultRate;
+            newAmt = usd * (newRate / defaultRate);
+        }
+        // Format like Python _fmt_usd
+        el.textContent = '$' + newAmt.toLocaleString('en-US', {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: 0
+        });
+    });
+
+    // Update source badge to "Using your custom rates"
+    var badge = document.getElementById('price-source-badge');
+    if (badge) {
+        badge.className = 'settings-price-badge settings-price-badge-custom';
+        badge.innerHTML = '&#9654; Using your custom rates';
+    }
+
+    // Show confirmation
+    var conf = document.getElementById('settings-applied-msg');
+    if (conf) {
+        conf.style.display = 'block';
+        setTimeout(function() { conf.style.display = 'none'; }, 3000);
+    }
+
+    closeSettings();
+}
 document.addEventListener('DOMContentLoaded', function() {
     var overlay = document.getElementById('settings-overlay');
     if (overlay) overlay.addEventListener('click', closeSettings);
+    // Pre-populate inputs from localStorage on load
+    var keys = ['indexed_log_per_million', 'ingested_log_per_gb', 'custom_metric_per_month'];
+    keys.forEach(function(k) {
+        var val = localStorage.getItem('price_' + k);
+        var el  = document.getElementById('sp-price_' + k);
+        if (el && val !== null) el.value = val;
+    });
 });
 </script>
 """
@@ -897,7 +1136,9 @@ def render_hero(scan: dict) -> str:
   </a>
 
   <div class="hero-eyebrow">Monthly Estimated Waste · {region}</div>
-  <div class="hero-amount">
+  <div class="hero-amount"
+       data-usd="{total}"
+       data-price-key="mixed">
     <span class="currency">$</span>{total:,.0f}
   </div>
   <div class="hero-sub">
@@ -926,13 +1167,14 @@ def render_lever_table(scan: dict, write_enabled: bool, apply_token: str = "") -
 
     rows_html = ""
     for opp in opps:
-        oid     = _esc(opp.get("id", ""))
-        title   = _esc(opp.get("title", ""))
-        cat     = opp.get("category", "")
-        savings = float(opp.get("monthly_savings_usd", 0))
-        pct     = _esc(opp.get("savings_pct", ""))
-        effort  = opp.get("effort", "medium")
-        conf    = opp.get("confidence", "")
+        oid      = _esc(opp.get("id", ""))
+        title    = _esc(opp.get("title", ""))
+        cat      = opp.get("category", "")
+        savings  = float(opp.get("monthly_savings_usd", 0))
+        pct      = _esc(opp.get("savings_pct", ""))
+        effort   = opp.get("effort", "medium")
+        conf     = opp.get("confidence", "")
+        price_key = "custom_metric_per_month" if cat == "metrics" else "indexed_log_per_million"
 
         dd_html = render_drilldown(opp, write_enabled, apply_token=apply_token)
 
@@ -944,7 +1186,9 @@ def render_lever_table(scan: dict, write_enabled: bool, apply_token: str = "") -
   </td>
   <td style="white-space:nowrap;">{_category_badge(cat)}</td>
   <td>
-    <div class="savings-amt">{_fmt_usd(savings)}</div>
+    <div class="savings-amt"
+         data-usd="{savings}"
+         data-price-key="{_esc(price_key)}">{_fmt_usd(savings)}</div>
     {f'<div class="savings-pct">↓ {pct}</div>' if pct else ''}
   </td>
   <td>{_effort_pill(effort)}</td>
@@ -968,7 +1212,9 @@ def render_lever_table(scan: dict, write_enabled: bool, apply_token: str = "") -
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
   <h2 style="margin:0;">Savings Opportunities</h2>
   <span style="font-size:0.82rem;color:#475569;">
-    Total recoverable: <strong style="color:#059669;">{_fmt_usd(total_recoverable)}/mo</strong>
+    Total recoverable: <strong style="color:#059669;"
+      data-usd="{total_recoverable}"
+      data-price-key="mixed">{_fmt_usd(total_recoverable)}</strong>/mo
     across <strong>{len(opps)}</strong> lever{'s' if len(opps) != 1 else ''}
   </span>
 </div>
@@ -1026,6 +1272,9 @@ def render_drilldown(opp: dict, write_enabled: bool, apply_token: str = "") -> s
     if lever in ("high_cardinality_metric", "high_cardinality_metrics"):
         heatmap_html = render_heatmap(opp)
 
+    # (e) "How we found this" collapsible — detection_query + why
+    detection_html = _render_detection_block(opp)
+
     return f"""
 <div style="margin-bottom:14px;">
   <div class="dd-section-label">Lever: {lever} &nbsp;·&nbsp; {_category_badge(cat)}</div>
@@ -1047,6 +1296,8 @@ def render_drilldown(opp: dict, write_enabled: bool, apply_token: str = "") -> s
 
 <div class="dd-section-label">Generated remediation config</div>
 {cfg_html}
+
+{detection_html}
 
 {apply_html}"""
 
@@ -1121,28 +1372,78 @@ def _render_projection(opp: dict, savings: float) -> str:
     current_cost = sum(float(e.get("cost_usd", 0)) for e in evidence)
     after_cost   = max(0.0, current_cost - savings)
     pct          = opp.get("savings_pct", "")
+    cat          = opp.get("category", "")
+    price_key    = "custom_metric_per_month" if cat == "metrics" else "indexed_log_per_million"
 
     return f"""
 <div class="projection-card">
   <div class="proj-row">
     <span class="proj-label">Current monthly cost</span>
-    <span class="proj-val proj-val-before">{_fmt_usd(current_cost)}</span>
+    <span class="proj-val proj-val-before"
+          data-usd="{current_cost}"
+          data-price-key="{_esc(price_key)}">{_fmt_usd(current_cost)}</span>
   </div>
   <hr class="proj-divider">
   <div class="proj-row">
     <span class="proj-label">After remediation</span>
-    <span class="proj-val proj-val-after">{_fmt_usd(after_cost)}</span>
+    <span class="proj-val proj-val-after"
+          data-usd="{after_cost}"
+          data-price-key="{_esc(price_key)}">{_fmt_usd(after_cost)}</span>
   </div>
   <div class="proj-saved-row">
     <span class="proj-saved-label">
       Estimated monthly saving{f' ({_esc(pct)})' if pct else ''}
     </span>
-    <span class="proj-saved-val">{_fmt_usd(savings)}</span>
+    <span class="proj-saved-val"
+          data-usd="{savings}"
+          data-price-key="{_esc(price_key)}">{_fmt_usd(savings)}</span>
   </div>
   <div style="font-size:0.72rem;color:#94a3b8;">
     Savings are model-estimated. Actual results vary by usage pattern.
   </div>
 </div>"""
+
+
+def _render_detection_block(opp: dict) -> str:
+    """
+    Collapsible 'How we found this' section. Renders only when detection_query
+    or why is present in the opportunity dict. Returns empty string otherwise.
+    """
+    query = opp.get("detection_query", "")
+    why   = opp.get("why", "")
+    if not query and not why:
+        return ""
+
+    query_html = ""
+    if query:
+        query_html = f"""
+<div style="margin-bottom:10px;">
+  <div class="dd-section-label" style="margin-bottom:6px;">Detection query</div>
+  <pre class="detection-query">{_esc(query)}</pre>
+</div>"""
+
+    why_html = ""
+    if why:
+        why_html = f"""
+<div>
+  <div class="dd-section-label" style="margin-bottom:4px;">Why this was flagged</div>
+  <div class="detection-why">{_esc(why)}</div>
+</div>"""
+
+    return f"""
+<details class="detection-collapsible">
+  <summary>
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+      <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+    </svg>
+    How we found this
+  </summary>
+  <div class="detection-collapsible-body">
+    {query_html}
+    {why_html}
+  </div>
+</details>"""
 
 
 def _render_apply_button(oid: str, write_enabled: bool, needs_write: bool,
@@ -1284,6 +1585,180 @@ def render_heatmap(opp: dict) -> str:
 </div>"""
 
 
+# ── render_scope_checklist ─────────────────────────────────────────────────────
+
+def render_scope_checklist(scope_check: dict) -> str:
+    """
+    Compact card with ✓/✗ per scope. Shows unlock notes for missing scopes
+    and a collapsible key-creation guide. Returns empty string for empty input.
+    """
+    if not scope_check:
+        return ""
+
+    _SCOPE_LABELS = {
+        "logs_read":    "logs_read",
+        "metrics_read": "metrics_read",
+        "billing_read": "billing_read",
+        "usage_read":   "usage_read",
+    }
+    _SCOPE_DEFAULT_DESC = {
+        "logs_read":    "Scan log indexes, pipelines, and archive costs",
+        "metrics_read": "Analyse custom metric cardinality and retention",
+        "billing_read": "Read committed spend and on-demand overages",
+        "usage_read":   "Access usage data for per-product breakdowns",
+    }
+
+    missing  = scope_check.get("missing", [])
+    unlocks  = scope_check.get("unlocks", {})
+
+    # Determine all scopes to display (present = True/False flags + missing list)
+    scope_flags = {}
+    for key in _SCOPE_LABELS:
+        flag = scope_check.get(key)
+        if flag is not None:
+            scope_flags[key] = bool(flag)
+        else:
+            scope_flags[key] = (key not in missing)
+
+    rows_html = ""
+    for key, present in scope_flags.items():
+        desc = unlocks.get(key) or _SCOPE_DEFAULT_DESC.get(key, "")
+        icon = '<span class="scope-icon-ok">✓</span>' if present else '<span class="scope-icon-err">✗</span>'
+        rows_html += f"""
+<div class="scope-row">
+  {icon}
+  <span class="scope-name">{_esc(key)}</span>
+  <span class="scope-desc">{_esc(desc)}</span>
+</div>"""
+
+    # Unlock note for missing scopes
+    unlock_html = ""
+    if missing:
+        items_html = "".join(
+            f"<li><code>{_esc(s)}</code> — {_esc(unlocks.get(s, 'unlocks additional savings analysis'))}</li>"
+            for s in missing
+        )
+        guide_html = f"""
+<details class="scope-key-guide">
+  <summary>How to create a read-only key with all scopes</summary>
+  <div class="scope-key-guide-body">
+    <strong>Application Key</strong> (grants scope access):
+    <ol>
+      <li>Go to <a href="https://app.datadoghq.com/organization-settings/application-keys" target="_blank" rel="noopener">Organization Settings &rarr; Application Keys</a></li>
+      <li>Click <strong>New Key</strong> and give it a name (e.g. <em>observabill-readonly</em>).</li>
+      <li>Under <strong>Scopes</strong>, tick: <code>usage_read</code>, <code>billing_read</code>, <code>logs_read</code>, <code>metrics_read</code>.</li>
+      <li>Click <strong>Create Key</strong> and copy the value — it is shown only once.</li>
+    </ol>
+    <strong>API Key</strong> (required alongside the Application Key):
+    <ol>
+      <li>Go to <a href="https://app.datadoghq.com/organization-settings/api-keys" target="_blank" rel="noopener">Organization Settings &rarr; API Keys</a></li>
+      <li>Click <strong>New Key</strong>, name it, then copy the value.</li>
+    </ol>
+    No admin access is needed — any user can create a scoped Application Key for their own org.
+  </div>
+</details>"""
+
+        unlock_html = f"""
+<div class="scope-unlock-note">
+  <strong>Unlock more savings</strong> — adding the missing scope{'s' if len(missing) != 1 else ''} reveals:
+  <ul>{items_html}</ul>
+  {guide_html}
+</div>"""
+
+    # Full-access banner
+    full_ok_html = ""
+    if not missing:
+        full_ok_html = '<div class="scope-all-ok">&#10003; Full access &mdash; all savings levers active.</div>'
+
+    return f"""
+<div class="scope-card">
+  <div class="scope-card-header">
+    <h3 style="margin:0;font-size:0.95rem;">API Scope Coverage</h3>
+  </div>
+  {rows_html}
+  {full_ok_html}
+  {unlock_html}
+</div>"""
+
+
+# ── render_settings_panel ──────────────────────────────────────────────────────
+
+def render_settings_panel(price_source: str = "list") -> str:
+    """
+    Slide-in gear panel: editable price assumptions, source badge, Save+Rescan button.
+    Defaults are stored in data-attributes and read/written via localStorage in JS.
+    Returns overlay + panel HTML (hidden by default, toggled by openSettings()).
+    """
+    _DEFAULTS = {
+        "indexed_log_per_million": "0.0125",
+        "ingested_log_per_gb":     "0.10",
+        "custom_metric_per_month": "0.05",
+    }
+
+    badge_cls  = {
+        "derived": "settings-price-badge-derived",
+        "list":    "settings-price-badge-list",
+        "custom":  "settings-price-badge-custom",
+    }.get(price_source, "settings-price-badge-list")
+
+    badge_text = {
+        "derived": "&#10003; Rates derived from your real bill",
+        "list":    "&#9651; List-price estimate &mdash; enter your real rate for exact $",
+        "custom":  "&#9654; Using your custom rates",
+    }.get(price_source, "&#9651; List-price estimate &mdash; enter your real rate for exact $")
+
+    return f"""
+<div class="settings-overlay" id="settings-overlay"></div>
+<div class="settings-panel" id="settings-panel">
+  <button class="settings-close" onclick="closeSettings()">&#10005; Close</button>
+  <h3 style="margin-bottom:6px;">Price Settings</h3>
+  <p style="font-size:0.82rem;color:#475569;margin-bottom:14px;">
+    Adjust unit prices used to compute savings estimates. Dollar figures on this page
+    update <strong>instantly in your browser</strong> — no re-scan, no API keys involved.
+    Rates are saved in localStorage for future visits.
+  </p>
+  <span class="settings-price-badge {_esc(badge_cls)}" id="price-source-badge">{badge_text}</span>
+
+  <div class="form-group">
+    <label class="form-label" for="sp-price_indexed_log_per_million">Indexed logs ($ per million events)</label>
+    <input class="settings-price-input" type="number" step="0.0001" min="0"
+           id="sp-price_indexed_log_per_million"
+           data-default="{_esc(_DEFAULTS['indexed_log_per_million'])}"
+           value="{_esc(_DEFAULTS['indexed_log_per_million'])}"
+           placeholder="{_esc(_DEFAULTS['indexed_log_per_million'])}">
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="sp-price_ingested_log_per_gb">Ingested logs ($ per GB)</label>
+    <input class="settings-price-input" type="number" step="0.001" min="0"
+           id="sp-price_ingested_log_per_gb"
+           data-default="{_esc(_DEFAULTS['ingested_log_per_gb'])}"
+           value="{_esc(_DEFAULTS['ingested_log_per_gb'])}"
+           placeholder="{_esc(_DEFAULTS['ingested_log_per_gb'])}">
+  </div>
+  <div class="form-group">
+    <label class="form-label" for="sp-price_custom_metric_per_month">Custom metrics ($ per metric per month)</label>
+    <input class="settings-price-input" type="number" step="0.001" min="0"
+           id="sp-price_custom_metric_per_month"
+           data-default="{_esc(_DEFAULTS['custom_metric_per_month'])}"
+           value="{_esc(_DEFAULTS['custom_metric_per_month'])}"
+           placeholder="{_esc(_DEFAULTS['custom_metric_per_month'])}">
+  </div>
+
+  <button class="btn btn-primary" style="width:100%;margin-top:4px;" onclick="saveSettings()">
+    Apply rates locally &rarr;
+  </button>
+  <div id="settings-applied-msg" style="display:none;margin-top:10px;padding:8px 12px;
+       background:#d1fae5;border:1px solid #6ee7b7;border-radius:7px;
+       font-size:0.82rem;color:#065f46;font-weight:600;">
+    &#10003; Rates applied locally — all dollar figures updated.
+  </div>
+  <div class="settings-note">
+    &#9432; Prices are for estimation only. Actual savings vary by contract tier.
+    Verify against your Datadog invoice before committing to a change.
+  </div>
+</div>"""
+
+
 # ── render_dashboard ───────────────────────────────────────────────────────────
 
 def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str = "") -> str:
@@ -1325,38 +1800,13 @@ def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str =
   </div>
 </div>"""
 
-    # Settings panel (always rendered, hidden by default)
-    settings_html = """
-<div class="settings-overlay" id="settings-overlay"></div>
-<div class="settings-panel" id="settings-panel">
-  <button class="settings-close" onclick="closeSettings()">✕ Close</button>
-  <h3 style="margin-bottom:16px;">Price Settings</h3>
-  <p style="font-size:0.85rem;color:#475569;margin-bottom:16px;">
-    Adjust the unit prices used to estimate savings. Changes are applied server-side on the next scan.
-  </p>
-  <div class="form-group">
-    <label class="form-label">Log ingestion price ($/GB)</label>
-    <input type="text" value="0.10" placeholder="0.10">
-  </div>
-  <div class="form-group">
-    <label class="form-label">Custom metrics price ($/100K/mo)</label>
-    <input type="text" value="5.00" placeholder="5.00">
-  </div>
-  <div class="form-group">
-    <label class="form-label">Region</label>
-    <select><option>US</option><option>EU</option><option>AP1</option></select>
-  </div>
-  <button class="btn btn-primary" style="width:100%;margin-top:8px;" onclick="closeSettings()">
-    Save &amp; Rescan →
-  </button>
-  <div class="settings-note">
-    ℹ Recompute runs server-side. Prices here are used for estimation only —
-    verify against your Datadog contract.
-  </div>
-</div>"""
+    # Settings panel — uses new render_settings_panel with price_source awareness
+    price_source  = scan.get("price_source", "list")
+    settings_html = render_settings_panel(price_source)
 
-    hero_html   = render_hero(scan)
-    table_html  = render_lever_table(scan, write_enabled, apply_token=apply_token)
+    hero_html  = render_hero(scan)
+    scope_html = render_scope_checklist(scan.get("scope_check", {}))
+    table_html = render_lever_table(scan, write_enabled, apply_token=apply_token)
 
     return f"""
 <style>{DASHBOARD_CSS}</style>
@@ -1364,6 +1814,7 @@ def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str =
 {settings_html}
 <div class="container-wide" style="padding-top:32px;">
   {hero_html}
+  {scope_html}
   {stats_html}
   {table_html}
 </div>"""
@@ -1375,12 +1826,23 @@ _SAMPLE_SCAN = {
     "total_monthly_waste_usd": 4_830.0,
     "currency": "USD",
     "region": "US",
+    "price_source": "list",
     "sparkline": [1200, 1350, 1280, 1420, 1390, 1470, 1520, 1600, 1590, 2480, 2310, 2100, 1980, 2050],
     "notes": [
         "Spike on 2026-06-22 (+54% vs baseline)",
         "EU region not yet scanned",
         "3 levers need write scope",
     ],
+    "scope_check": {
+        "logs_read":    True,
+        "metrics_read": True,
+        "billing_read": True,
+        "usage_read":   False,
+        "missing": ["usage_read"],
+        "unlocks": {
+            "usage_read": "Per-team cost attribution and on-demand overage breakdown by service",
+        },
+    },
     "opportunities": [
         {
             "id": "opp-1",
@@ -1392,6 +1854,8 @@ _SAMPLE_SCAN = {
             "savings_pct": "47%",
             "effort": "low",
             "confidence": "high — 30-day query audit",
+            "detection_query": "GET /api/v1/logs/config/indexes\n# Then for each index, query usage:\nGET /api/v1/usage/logs?start_hr=2026-06-01T00:00:00Z&end_hr=2026-07-01T00:00:00Z\n# Cross-reference index ingestion volume against dashboard/monitor query audit logs",
+            "why": "The 'debug' index accounts for 38 GB/day of ingestion but had zero queries from dashboards, monitors, or notebooks over the last 30 days. DEBUG-level logs are rarely actionable in production — they should be excluded at the pipeline filter layer rather than indexed at full cost.",
             "evidence": [
                 {"label": "debug index",    "volume": "38 GB/day",  "cost_usd": 1_140.0},
                 {"label": "trace index",    "volume": "12 GB/day",  "cost_usd": 360.0},
@@ -1420,6 +1884,8 @@ _SAMPLE_SCAN = {
             "savings_pct": "38%",
             "effort": "medium",
             "confidence": "high — cardinality API",
+            "detection_query": "GET /api/v1/metrics/{metric_name}/tags\n# Returns tag keys and their cardinality estimates.\n# Flag metrics where any single tag key has cardinality > 10,000\nGET /api/v1/metrics/pod_id/tags\n# Compare tag-key cardinality against /api/v1/metrics/summary for volume",
+            "why": "The tag key 'pod_id' has ~150,000 unique values and rotates with every Kubernetes deployment. Each unique tag combination creates a separate timeseries, leading to 2.1M active series across 14 metrics. Datadog bills per active custom metric timeseries — removing or aggregating this tag collapses 94% of the volume to namespace-level granularity, which covers all legitimate alerting use cases.",
             "evidence": [
                 {"label": "request_duration:pod_id",  "volume": "840K series", "cost_usd": 420.0},
                 {"label": "memory_rss:pod_id",         "volume": "620K series", "cost_usd": 310.0},
@@ -1556,8 +2022,10 @@ if __name__ == "__main__":
     print(f"  File size             : {len(page):,} bytes")
     print()
     print("Functions exported:")
-    print("  render_dashboard(scan, write_enabled) -> str")
+    print("  render_dashboard(scan, write_enabled, apply_token) -> str")
     print("  render_hero(scan) -> str")
-    print("  render_lever_table(scan, write_enabled) -> str")
-    print("  render_drilldown(opp, write_enabled) -> str")
+    print("  render_lever_table(scan, write_enabled, apply_token) -> str")
+    print("  render_drilldown(opp, write_enabled, apply_token) -> str  [+detection block]")
     print("  render_heatmap(opp) -> str")
+    print("  render_scope_checklist(scope_check) -> str  [NEW]")
+    print("  render_settings_panel(price_source) -> str  [NEW]")

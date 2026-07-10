@@ -9,8 +9,10 @@ data contract consumed by the UI and /apply endpoint.
 
 Public API
 ----------
-scan(api_key, app_key, site, prices=DEFAULT_PRICES) -> ScanResult
+scan(api_key, app_key, site, prices=None) -> ScanResult
 build_apply_request(opportunity) -> {endpoint, verb, payload}
+preflight_scopes(api_key, app_key, site) -> dict
+derive_effective_prices(estimated_cost_json, usage_logs_json, defaults=DEFAULT_PRICES) -> dict
 
 Detector functions (each returns SavingsOpportunity | None)
 ------------------------------------------------------------
@@ -243,8 +245,157 @@ def _make_id(lever: str, discriminator: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Scope labels and unlock descriptions
+# ---------------------------------------------------------------------------
+
+_SCOPE_UNLOCKS: dict[str, str] = {
+    "logs_read": "log-exclusion + logs→metrics savings (detectors 1 and 2)",
+    "metrics_read": "high-cardinality metric savings (detector 3)",
+    "billing_read": "exact $ totals from your real bill via derive_effective_prices",
+    "usage_read": "index quota recommendations (detector 4) + blended-rate derivation",
+}
+
+
+# ---------------------------------------------------------------------------
+# preflight_scopes — probe endpoints to infer key permissions
+# ---------------------------------------------------------------------------
+
+def preflight_scopes(api_key: str, app_key: str, site: str) -> dict:
+    """Probe cheap read-only endpoints and infer which scopes the key has.
+
+    Returns
+    -------
+    {
+        "logs_read": bool,
+        "metrics_read": bool,
+        "billing_read": bool,
+        "usage_read": bool,
+        "missing": [scope_name, ...],
+        "unlocks": {scope_name: description},
+    }
+
+    A 200 => scope present; 403 => absent; any other error => absent (safe default).
+    Keys are NEVER included in the returned dict.
+    """
+    base = dd_client.base_url(site)
+    headers = _make_headers(api_key, app_key)
+
+    def _probe(path: str) -> bool:
+        """Return True if the endpoint returns 200, False otherwise."""
+        url = f"{base}{path}"
+        try:
+            status, _, _ = _http_get(url, headers)
+            return status == 200
+        except Exception:
+            return False
+
+    logs_read = _probe("/api/v1/logs/config/indexes")
+    metrics_read = _probe("/api/v2/metrics?page[limit]=1")
+    # billing_read and usage_read share the same estimated_cost endpoint
+    billing_ok = _probe("/api/v2/usage/estimated_cost")
+    billing_read = billing_ok
+    usage_read = billing_ok
+
+    missing = []
+    if not logs_read:
+        missing.append("logs_read")
+    if not metrics_read:
+        missing.append("metrics_read")
+    if not billing_read:
+        missing.append("billing_read")
+    if not usage_read:
+        missing.append("usage_read")
+
+    return {
+        "logs_read": logs_read,
+        "metrics_read": metrics_read,
+        "billing_read": billing_read,
+        "usage_read": usage_read,
+        "missing": missing,
+        "unlocks": dict(_SCOPE_UNLOCKS),
+    }
+
+
+# ---------------------------------------------------------------------------
+# derive_effective_prices — compute blended indexed-log rate from real bill
+# ---------------------------------------------------------------------------
+
+def derive_effective_prices(
+    estimated_cost_json: dict,
+    usage_logs_json: dict,
+    defaults: dict[str, float] = DEFAULT_PRICES,
+) -> dict:
+    """Compute real blended indexed-log rate from actual billing data.
+
+    Parameters
+    ----------
+    estimated_cost_json : response from GET /api/v2/usage/estimated_cost
+    usage_logs_json     : response from GET /api/v1/usage/logs
+    defaults            : base price dict to merge into (default: DEFAULT_PRICES)
+
+    Returns
+    -------
+    {
+        "prices": {...},       # all DEFAULT_PRICES keys; indexed_log_per_million may be overridden
+        "source": "derived" | "list",
+        "blended_note": str,
+    }
+    """
+    prices = dict(defaults)
+
+    # --- Extract total indexed-log cost from estimated_cost_json ---
+    indexed_log_total = 0.0
+    for row in estimated_cost_json.get("data", []):
+        for charge in row.get("attributes", {}).get("charges", []):
+            if "log" in charge.get("product_name", "").lower():
+                indexed_log_total += float(charge.get("cost", 0.0))
+
+    # --- Extract total indexed events (millions) from usage_logs_json ---
+    total_indexed_events = sum(
+        int(row.get("indexed_events_count", 0))
+        for row in usage_logs_json.get("usage", [])
+    )
+    total_indexed_millions = total_indexed_events / 1_000_000
+
+    # --- Derive blended rate if both components are usable ---
+    if indexed_log_total > 0 and total_indexed_millions > 0:
+        blended_rate = indexed_log_total / total_indexed_millions
+        prices["indexed_log_per_million"] = blended_rate
+        source = "derived"
+        blended_note = (
+            f"Blended rate ${blended_rate:.4f}/million derived from "
+            f"${indexed_log_total:.2f} indexed-log charges / "
+            f"{total_indexed_millions:.1f}M events (30d)"
+        )
+    else:
+        source = "list"
+        blended_note = (
+            "Using list-price defaults (estimated_cost or usage volume unavailable). "
+            f"Default indexed_log_per_million=${defaults.get('indexed_log_per_million', 0):.2f}."
+        )
+
+    return {
+        "prices": prices,
+        "source": source,
+        "blended_note": blended_note,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Detector 1 — Exclusion filter candidates
 # ---------------------------------------------------------------------------
+
+def _is_noise_status(status) -> bool:
+    """True for low-value, high-volume log statuses safe to exclude/sample.
+
+    Case-INSENSITIVE (real Datadog `status` facet values are lowercase, e.g.
+    "debug", "200"). Matches HTTP 2xx success codes (access-log noise) and the
+    DEBUG level. Deliberately does NOT match "info"/"warn"/"error" — we never
+    recommend dropping potentially-useful logs by default.
+    """
+    s = str(status).strip().lower()
+    return s == "debug" or s.startswith("2")
+
 
 def detect_exclusion_candidates(
     logs_aggregate: dict,
@@ -276,7 +427,7 @@ def detect_exclusion_candidates(
         monthly = _extrapolate_to_monthly(count_7d)
 
         # Candidate: high-volume 200 or DEBUG logs
-        if status in ("200", "DEBUG") and monthly >= _MIN_MONTHLY_EVENTS_THRESHOLD:
+        if _is_noise_status(status) and monthly >= _MIN_MONTHLY_EVENTS_THRESHOLD:
             candidates.append((service, status, monthly))
 
     if not candidates:
@@ -328,6 +479,19 @@ def detect_exclusion_candidates(
     # Estimate total indexed cost for savings_pct denominator
     total_indexed_cost = total_monthly_events / 1_000_000 * price_per_million
 
+    _detection_query = (
+        'POST /api/v2/logs/analytics/aggregate '
+        'group_by service,status query:"status:200 OR status:DEBUG" '
+        f'(top candidate: service:{top_service} status:{top_status})'
+    )
+    _why = (
+        f"{len(candidates)} service/status pair(s) produce "
+        f"{total_monthly_events / 1_000_000:.1f}M indexable events/month at "
+        f"${price_per_million:.2f}/million = ${monthly_savings_usd:.2f}/month; "
+        f"top offender is {top_service} [{top_status}] — safe to exclude because "
+        "200/DEBUG logs carry no actionable signal."
+    )
+
     return {
         "id": _make_id("exclusion_filter", f"{top_service}-{top_status}"),
         "lever": "exclusion_filter",
@@ -345,6 +509,8 @@ def detect_exclusion_candidates(
         "evidence": evidence,
         "generated_config": generated_config,
         "needs_write_scope": True,
+        "detection_query": _detection_query,
+        "why": _why,
     }
 
 
@@ -394,7 +560,7 @@ def detect_logs_to_metrics(
     l2m_candidates: list[tuple[str, float]] = []  # (service, monthly_200_events)
     for service, status_counts in service_volumes.items():
         total_7d = sum(status_counts.values())
-        count_200_7d = status_counts.get("200", 0)
+        count_200_7d = sum(c for st, c in status_counts.items() if str(st).strip().startswith("2"))
         if total_7d == 0:
             continue
         error_ratio = (total_7d - count_200_7d) / total_7d
@@ -445,6 +611,18 @@ def detect_logs_to_metrics(
         for svc, monthly in l2m_candidates[:5]
     ]
 
+    _detection_query = (
+        f'POST /api/v2/logs/analytics/aggregate '
+        f'group_by service,status query:"service:{top_service} status:200" '
+        f'(error_ratio<{_MAX_ERROR_RATIO_FOR_L2M*100:.0f}%, monthly>{_MIN_MONTHLY_EVENTS_THRESHOLD/1e6:.0f}M)'
+    )
+    _why = (
+        f"{top_service} has {top_monthly / 1_000_000:.1f}M 200-status events/month "
+        f"with <{_MAX_ERROR_RATIO_FOR_L2M * 100:.0f}% errors; "
+        f"indexed cost ${indexed_cost:.2f}/month vs log-based metric ~${metric_cost:.2f}/month "
+        f"= ${net_savings:.2f}/month net savings by converting to a count metric."
+    )
+
     return {
         "id": _make_id("logs_to_metrics", top_service),
         "lever": "logs_to_metrics",
@@ -462,6 +640,8 @@ def detect_logs_to_metrics(
         "evidence": evidence,
         "generated_config": generated_config,
         "needs_write_scope": True,
+        "detection_query": _detection_query,
+        "why": _why,
     }
 
 
@@ -553,6 +733,17 @@ def detect_high_cardinality_metrics(
         for name, vol, fb in offenders[:5]
     ]
 
+    _detection_query = (
+        f'GET /api/v2/metrics/{top_metric}/volumes '
+        f'(tag_configurations inspected for forbidden tags: {sorted(_FORBIDDEN_TAGS)!r})'
+    )
+    _why = (
+        f"{top_metric} uses forbidden tag(s) {top_forbidden!r} that inflate cardinality "
+        f"to {top_volume:,} timeseries at ${price_per_metric:.4f}/timeseries = "
+        f"${current_cost:.2f}/month; dropping them reduces volume by "
+        f"~{cardinality_reduction * 100:.0f}% saving ${savings:.2f}/month."
+    )
+
     return {
         "id": _make_id("high_cardinality_metric", top_metric),
         "lever": "high_cardinality_metric",
@@ -570,6 +761,8 @@ def detect_high_cardinality_metrics(
         "evidence": evidence,
         "generated_config": generated_config,
         "needs_write_scope": True,
+        "detection_query": _detection_query,
+        "why": _why,
     }
 
 
@@ -654,6 +847,19 @@ def detect_index_quota(
         },
     ]
 
+    _detection_query = (
+        f'GET /api/v1/usage/logs (30d) + GET /api/v1/logs/config/indexes '
+        f'(index "{target_name}" has daily_limit=None; '
+        f'avg={avg_daily/1e6:.2f}M/day stddev={stddev/1e6:.2f}M/day)'
+    )
+    _why = (
+        f"Index '{target_name}' has no daily_limit; 30-day avg is "
+        f"{avg_daily / 1_000_000:.2f}M events/day (stddev {stddev / 1_000_000:.2f}M). "
+        f"Recommended quota {recommended_quota / 1_000_000:.2f}M events/day (avg × 1.2) "
+        f"would have prevented {overage_events / 1e6:.2f}M overage events = "
+        f"${monthly_savings_usd:.2f} in potential overages this period."
+    )
+
     return {
         "id": _make_id("index_quota", target_name),
         "lever": "index_quota",
@@ -672,6 +878,8 @@ def detect_index_quota(
         "evidence": evidence,
         "generated_config": generated_config,
         "needs_write_scope": True,
+        "detection_query": _detection_query,
+        "why": _why,
     }
 
 
@@ -683,7 +891,7 @@ def scan(
     api_key: str,
     app_key: str,
     site: str = "us1",
-    prices: dict[str, float] = DEFAULT_PRICES,
+    prices: "dict[str, float] | None" = None,
 ) -> dict:
     """Run all detectors and return a ScanResult.
 
@@ -695,13 +903,53 @@ def scan(
     api_key  : Datadog API key (sent only in headers, never logged)
     app_key  : Datadog application key (sent only in headers, never logged)
     site     : Datadog site (e.g. "us1", "eu")
-    prices   : optional pricing override (defaults to DEFAULT_PRICES)
+    prices   : optional pricing override. If None, derives prices from billing
+               data (best-effort). Pass a dict to use custom prices.
 
     Returns
     -------
-    ScanResult dict.
+    ScanResult dict with additional keys: scope_check, price_source.
     """
     notes: list[str] = []
+
+    # --- Step 1: Preflight scope check ---
+    scope_check: dict = {}
+    try:
+        scope_check = preflight_scopes(api_key, app_key, site)
+    except Exception as exc:
+        scope_check = {
+            "logs_read": False,
+            "metrics_read": False,
+            "billing_read": False,
+            "usage_read": False,
+            "missing": ["logs_read", "metrics_read", "billing_read", "usage_read"],
+            "unlocks": dict(_SCOPE_UNLOCKS),
+        }
+        notes.append(f"Preflight scope check failed: {type(exc).__name__}")
+
+    # --- Step 2: Determine prices ---
+    price_source: str
+    if prices is not None:
+        # Caller supplied explicit prices — use them, no derivation
+        effective_prices = prices
+        price_source = "custom"
+    else:
+        # Try to derive from real billing data (best-effort)
+        estimated_cost_json: dict = {}
+        usage_for_pricing: dict = {}
+        try:
+            estimated_cost_json = _get("/api/v2/usage/estimated_cost", {}, api_key, app_key, site)
+        except dd_client.DatadogError:
+            pass  # graceful: derive_effective_prices will fall back to list
+
+        try:
+            usage_for_pricing = _fetch_usage_logs(api_key, app_key, site)
+        except dd_client.DatadogError:
+            pass
+
+        price_result = derive_effective_prices(estimated_cost_json, usage_for_pricing)
+        effective_prices = price_result["prices"]
+        price_source = price_result["source"]
 
     # --- Fetch logs data ---
     logs_aggregate: dict = {}
@@ -739,19 +987,19 @@ def scan(
     # --- Run detectors ---
     opportunities: list[dict] = []
 
-    opp = detect_exclusion_candidates(logs_aggregate, logs_indexes, prices=prices)
+    opp = detect_exclusion_candidates(logs_aggregate, logs_indexes, prices=effective_prices)
     if opp is not None:
         opportunities.append(opp)
 
-    opp = detect_logs_to_metrics(logs_aggregate, logs_indexes, prices=prices)
+    opp = detect_logs_to_metrics(logs_aggregate, logs_indexes, prices=effective_prices)
     if opp is not None:
         opportunities.append(opp)
 
-    opp = detect_high_cardinality_metrics(metrics_volumes, prices=prices)
+    opp = detect_high_cardinality_metrics(metrics_volumes, prices=effective_prices)
     if opp is not None:
         opportunities.append(opp)
 
-    opp = detect_index_quota(usage_logs, logs_indexes, prices=prices)
+    opp = detect_index_quota(usage_logs, logs_indexes, prices=effective_prices)
     if opp is not None:
         opportunities.append(opp)
 
@@ -782,6 +1030,8 @@ def scan(
         "opportunities": opportunities,
         "sparkline": sparkline,
         "notes": notes,
+        "scope_check": scope_check,
+        "price_source": price_source,
     }
 
 

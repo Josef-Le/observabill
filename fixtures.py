@@ -39,6 +39,15 @@ SAMPLE_SCAN = {
     "total_monthly_waste_usd": 3500.0,
     "currency": "USD",
     "region": "us-east-1",
+    "price_source": "derived",
+    "scope_check": {
+        "logs_read":    True,
+        "metrics_read": True,
+        "billing_read": True,
+        "usage_read":   True,
+        "missing": [],
+        "unlocks": {},
+    },
     "opportunities": [
         # 1. logs_to_metrics: CDN/LB 2xx access logs -> count metric (~$1,850/mo)
         {
@@ -85,6 +94,8 @@ SAMPLE_SCAN = {
                 },
             },
             "needs_write_scope": True,
+            "detection_query": "POST /api/v2/logs/analytics/aggregate\n{\"compute\": [{\"aggregation\": \"count\", \"type\": \"total\"}], \"filter\": {\"from\": \"now-30d\", \"query\": \"source:(cdn-prod OR load-balancer-us OR api-gateway-prod OR cdn-edge-cache) status:200\"}, \"group_by\": [{\"facet\": \"service\", \"limit\": 10}]}",
+            "why": "HTTP 200 responses from CDN and load-balancers carry no actionable signal — they confirm success, which is already tracked by error-rate monitors. These 4 sources collectively account for 35.6M events/day at $945+$420+$260+$225 = $1,850/mo. Converting them to a count metric preserves trend visibility at <$5/mo.",
         },
         # 2. high_cardinality_metric: user_id tag explosion (~$780/mo)
         {
@@ -125,6 +136,8 @@ SAMPLE_SCAN = {
                 },
             },
             "needs_write_scope": True,
+            "detection_query": "GET /api/v1/metrics/payment.transaction.latency/tags\n# Returns tag keys and cardinality estimates for each.\n# Flag: any tag_name with cardinality > 50,000 on a gauge metric.\nGET /api/v1/metrics/summary?metric_names=payment.transaction.latency",
+            "why": "The 'user_id' tag on payment.transaction.latency has ~450,000 unique values per day (one timeseries per user). Each unique tag combination is billed as an independent custom metric timeseries. Collapsing user_id into 10 user_cohort buckets (e.g. by spend tier) preserves p99 latency visibility for alerting while eliminating 99.9% of cardinality.",
         },
         # 3. exclusion_filter: health-check + kube-probe logs (~$420/mo)
         {
@@ -167,6 +180,8 @@ SAMPLE_SCAN = {
                 },
             },
             "needs_write_scope": True,
+            "detection_query": "POST /api/v2/logs/analytics/aggregate\n{\"compute\": [{\"aggregation\": \"count\", \"type\": \"total\"}], \"filter\": {\"from\": \"now-30d\", \"query\": \"http.method:GET (path:/health OR path:/healthz OR path:/ready)\"}, \"group_by\": [{\"facet\": \"path\", \"limit\": 5}]}",
+            "why": "Kubernetes liveness and readiness probes fire every 10–30 seconds per pod. With hundreds of pods in production, this generates 12.3M+ health-check GET requests per day in the log index. These logs are structurally identical (always 200 OK for healthy pods) and carry zero diagnostic value — alerting on failed health checks is better handled via Kubernetes events, not log-based monitors.",
         },
         # 4. exclusion_filter: DEBUG logs left on in production (~$260/mo)
         {
