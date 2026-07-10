@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: observabill
+    runtime: python
+    plan: starter
+    buildCommand: ""
+    startCommand: python3 app.py
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: PUBLIC_URL
+        value: https://observabill.onrender.com
+    disk:
+      name: observabill-data
+      mountPath: /var/data
+      sizeGB: 1
