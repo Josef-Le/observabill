@@ -97,47 +97,46 @@ SAMPLE_SCAN = {
             "detection_query": "POST /api/v2/logs/analytics/aggregate\n{\"compute\": [{\"aggregation\": \"count\", \"type\": \"total\"}], \"filter\": {\"from\": \"now-30d\", \"query\": \"source:(cdn-prod OR load-balancer-us OR api-gateway-prod OR cdn-edge-cache) status:200\"}, \"group_by\": [{\"facet\": \"service\", \"limit\": 10}]}",
             "why": "HTTP 200 responses from CDN and load-balancers carry no actionable signal — they confirm success, which is already tracked by error-rate monitors. These 4 sources collectively account for 35.6M events/day at $945+$420+$260+$225 = $1,850/mo. Converting them to a count metric preserves trend visibility at <$5/mo.",
         },
-        # 2. high_cardinality_metric: user_id tag explosion (~$780/mo)
+        # 2. high_cardinality_metric: ingested >> indexed (Metrics-without-Limits waste, ~$780/mo)
         {
             "id": "opp-002-user-id-cardinality",
             "lever": "high_cardinality_metric",
             "category": "metrics",
-            "title": "Reduce cardinality on payment-service custom metric",
-            "summary": "payment.transaction.latency metric is tagged by user_id, creating unbounded cardinality (~450k unique users/day). Recommend tagging by user_cohort (10 buckets) instead.",
+            "title": "Reduce ingested cardinality on payment.transaction.latency via Metrics-without-Limits",
+            "summary": "payment.transaction.latency ingests 15,600,000 timeseries but indexes only 312,000 (2.0%). Metrics-without-Limits eliminates the 15,288,000 unused timeseries.",
             "monthly_savings_usd": 780.0,
-            "savings_pct": "25.1%",
+            "savings_pct": "98%",
             "effort": "medium",
             "confidence": "high",
             "evidence": [
                 {
-                    "label": "payment.transaction.latency unique user_ids",
-                    "volume": "450k uniques/day",
-                    "cost_usd": 540.0,
+                    "label": "payment.transaction.latency",
+                    "volume": "15,600,000 ingested / 312,000 queried",
+                    "cost_usd": 764.4,
                 },
                 {
-                    "label": "Spillover storage (DTS overage)",
-                    "volume": "High-cardinality spillover",
-                    "cost_usd": 240.0,
+                    "label": "payment.request.count",
+                    "volume": "3,100,000 ingested / 62,000 queried",
+                    "cost_usd": 15.6,
                 },
             ],
             "generated_config": {
-                "endpoint": "/api/v1/metrics/{metric_id}/tag_configurations",
-                "verb": "PATCH",
+                "endpoint": "/api/v2/metrics/payment.transaction.latency/tags",
+                "verb": "POST",
                 "payload": {
-                    "metric_id": "payment.transaction.latency",
-                    "tags": {
-                        "user_id": {"aggregations": ["percentile_approx(0.99)"]},
-                        "user_cohort": {
-                            "aggregations": ["count", "percentile_approx(0.99)"]
+                    "data": {
+                        "type": "manage_tags",
+                        "id": "payment.transaction.latency",
+                        "attributes": {
+                            "tags": [],
+                            "metric_type": "gauge",
                         },
-                    },
-                    "exclude_tags_mode": True,
-                    "excluded_tags": ["user_id"],
+                    }
                 },
             },
             "needs_write_scope": True,
-            "detection_query": "GET /api/v1/metrics/payment.transaction.latency/tags\n# Returns tag keys and cardinality estimates for each.\n# Flag: any tag_name with cardinality > 50,000 on a gauge metric.\nGET /api/v1/metrics/summary?metric_names=payment.transaction.latency",
-            "why": "The 'user_id' tag on payment.transaction.latency has ~450,000 unique values per day (one timeseries per user). Each unique tag combination is billed as an independent custom metric timeseries. Collapsing user_id into 10 user_cohort buckets (e.g. by spend tier) preserves p99 latency visibility for alerting while eliminating 99.9% of cardinality.",
+            "detection_query": "GET /api/v2/metrics/{name}/volumes  -> flag ingested_volume>>indexed_volume (top: payment.transaction.latency: 15,600,000 ingested / 312,000 queried)",
+            "why": "2 metric(s) ingest cardinality they never index/query. Top offender: payment.transaction.latency ingests 15,600,000 timeseries but only indexes 312,000 (2.0%) — 15,288,000 ingested-but-never-indexed timeseries at $0.0500/timeseries = $764.40/month wasted. Metrics-without-Limits lets you configure which tag combinations to keep, eliminating the ingested-but-never-indexed cost.",
         },
         # 3. exclusion_filter: health-check + kube-probe logs (~$420/mo)
         {

@@ -199,7 +199,7 @@ def _fetch_logs_indexes(api_key: str, app_key: str, site: str) -> dict:
 
 def _fetch_metrics_list(api_key: str, app_key: str, site: str) -> dict:
     """GET /api/v2/metrics — list custom metrics."""
-    return _get("/api/v2/metrics", {"filter[tags_cardinality]": "true"}, api_key, app_key, site)
+    return _get("/api/v2/metrics", {}, api_key, app_key, site)
 
 
 def _fetch_metric_volumes(metric_name: str, api_key: str, app_key: str, site: str) -> dict:
@@ -290,7 +290,9 @@ def preflight_scopes(api_key: str, app_key: str, site: str) -> dict:
             return False
 
     logs_read = _probe("/api/v1/logs/config/indexes")
-    metrics_read = _probe("/api/v2/metrics?page[limit]=1")
+    # NOTE: /api/v2/metrics rejects page[limit]/filter[tags_cardinality] with 400 (not 403),
+    # which a naive probe misreads as "scope absent". Probe the plain endpoint: 200 => metrics_read.
+    metrics_read = _probe("/api/v2/metrics")
     # billing_read and usage_read share the same estimated_cost endpoint
     billing_ok = _probe("/api/v2/usage/estimated_cost")
     billing_read = billing_ok
@@ -646,21 +648,46 @@ def detect_logs_to_metrics(
 
 
 # ---------------------------------------------------------------------------
-# Detector 3 — High-cardinality metrics
+# Detector 3 — High-cardinality metrics (Metrics-without-Limits waste)
 # ---------------------------------------------------------------------------
+
+# Minimum ingested timeseries to be worth acting on
+_MIN_INGESTED_TIMESERIES = 10_000
+
+# Flag metrics where indexed/ingested < this ratio (querying < 50% of ingested = waste)
+_MAX_INDEXED_RATIO = 0.50
+
 
 def detect_high_cardinality_metrics(
     metrics_volumes: dict[str, dict],
     prices: dict[str, float] = DEFAULT_PRICES,
 ) -> "dict | None":
-    """Detect custom metrics with forbidden high-cardinality tags.
+    """Detect custom metrics where ingested_volume >> indexed_volume (Metrics-without-Limits waste).
 
-    Forbidden tags: user_id, trace_id, request_id, ip.
-    These explode cardinality and should be dropped from tag configurations.
+    Uses the REAL /api/v2/metrics/{name}/volumes response shape:
+      {data: {type: "metric_volumes", id: "<name>",
+              attributes: {indexed_volume: <int>, ingested_volume: <int>}}}
+
+    ingested_volume = total timeseries produced (what you pay to ingest)
+    indexed_volume  = timeseries actually queried/stored for alerting/dashboards
+
+    When ingested >> indexed you are paying to ingest cardinality you never query.
+    Metrics-without-Limits lets you configure which tag combinations to keep (keep
+    only the indexed set), eliminating the unused cardinality cost.
+
+    Flags a metric if:
+      - ingested_volume >= _MIN_INGESTED_TIMESERIES (10k — small metrics aren't worth it)
+      - indexed_volume / ingested_volume < _MAX_INDEXED_RATIO (< 50% queried = waste)
+
+    Ranks flagged metrics by unused = ingested - indexed (descending).
+
+    monthly_savings_usd = sum(unused) * custom_metric_per_month
+      (unused timeseries you can stop ingesting via Metrics-without-Limits)
 
     Parameters
     ----------
-    metrics_volumes : {metric_name: volumes_response_dict} from GET /api/v2/metrics/{name}/volumes
+    metrics_volumes : {metric_name: /volumes response dict}
+                      from GET /api/v2/metrics/{name}/volumes
     prices          : pricing dict
 
     Returns
@@ -669,56 +696,55 @@ def detect_high_cardinality_metrics(
     """
     price_per_metric = prices["custom_metric_per_month"]
 
-    # Find metrics with forbidden tags
-    offenders: list[tuple[str, int, list[str]]] = []  # (name, indexed_volume, forbidden_found)
+    # Find metrics with high waste: ingested >> indexed
+    offenders: list[tuple[str, int, int, int]] = []  # (name, ingested, indexed, unused)
     for metric_name, vol_response in metrics_volumes.items():
         attrs = vol_response.get("data", {}).get("attributes", {})
-        tag_configs = attrs.get("tag_configurations", [])
-        all_tags: set[str] = set()
-        for tc in tag_configs:
-            for tag in tc.get("tag_keys", []):
-                all_tags.add(tag)
-        # Also check the tags dict directly
-        tags_dict = attrs.get("tags", {})
-        all_tags.update(tags_dict.keys())
+        ingested_raw = attrs.get("ingested_volume")
+        indexed_raw = attrs.get("indexed_volume")
+        # Real API may return None for metrics without Metrics-without-Limits configured
+        if ingested_raw is None or indexed_raw is None:
+            continue
+        ingested = int(ingested_raw)
+        indexed = int(indexed_raw)
 
-        forbidden_found = [t for t in all_tags if t in _FORBIDDEN_TAGS]
-        if forbidden_found:
-            indexed_volume = int(attrs.get("indexed_volume", 0))
-            offenders.append((metric_name, indexed_volume, forbidden_found))
+        if ingested < _MIN_INGESTED_TIMESERIES:
+            continue  # too small to bother
+
+        ratio = indexed / ingested if ingested > 0 else 1.0
+        if ratio >= _MAX_INDEXED_RATIO:
+            continue  # already querying >= 50% — not flagged
+
+        unused = max(0, ingested - indexed)
+        offenders.append((metric_name, ingested, indexed, unused))
 
     if not offenders:
         return None
 
-    # Sort by indexed_volume descending
-    offenders.sort(key=lambda x: x[1], reverse=True)
-    top_metric, top_volume, top_forbidden = offenders[0]
+    # Rank by unused timeseries descending (highest waste first)
+    offenders.sort(key=lambda x: x[3], reverse=True)
+    top_metric, top_ingested, top_indexed, top_unused = offenders[0]
 
-    # Safe tags = all tags minus forbidden ones
-    attrs = metrics_volumes[top_metric].get("data", {}).get("attributes", {})
-    all_tags_for_metric: set[str] = set()
-    for tc in attrs.get("tag_configurations", []):
-        all_tags_for_metric.update(tc.get("tag_keys", []))
-    all_tags_for_metric.update(attrs.get("tags", {}).keys())
-    safe_tags = sorted(t for t in all_tags_for_metric if t not in _FORBIDDEN_TAGS)
+    # Total unused across all flagged metrics (for total savings)
+    total_unused = sum(x[3] for x in offenders)
+    monthly_savings_usd = total_unused * price_per_metric
+    ingested_cost = top_ingested * price_per_metric  # cost basis for savings_pct
 
-    # Savings: current cardinality cost minus reduced cardinality cost
-    # Each forbidden tag potentially multiplies cardinality by N unique values
-    # Conservatively: dropping forbidden tags reduces cardinality by 80%
-    cardinality_reduction = 0.80
-    current_cost = top_volume * price_per_metric
-    reduced_volume = int(top_volume * (1 - cardinality_reduction))
-    savings = (top_volume - reduced_volume) * price_per_metric
-
+    # generated_config: Metrics-without-Limits tag configuration
+    # Real endpoint: POST /api/v2/metrics/{metric}/tags  (v2, documented)
     generated_config = {
-        "endpoint": f"/api/v1/metric/{top_metric}/tag_configurations",
-        "verb": "PATCH",
+        "endpoint": f"/api/v2/metrics/{top_metric}/tags",
+        "verb": "POST",
         "payload": {
             "data": {
                 "type": "manage_tags",
                 "id": top_metric,
                 "attributes": {
-                    "tags": safe_tags,  # safe tags only — no forbidden ones
+                    # Keep only the tags already being queried (indexed set).
+                    # The actual tag list should be determined from your dashboards/monitors.
+                    # This config tells Datadog to limit ingested cardinality to queried tags only.
+                    "tags": [],  # populated by user from their monitor/dashboard tag set
+                    "metric_type": "gauge",
                 },
             }
         },
@@ -726,38 +752,46 @@ def detect_high_cardinality_metrics(
 
     evidence = [
         {
-            "label": f"{name} (drops: {', '.join(fb)})",
-            "volume": f"{vol:,} timeseries",
-            "cost_usd": round(vol * price_per_metric, 2),
+            "label": name,
+            "volume": f"{ingested:,} ingested / {indexed:,} queried",
+            "cost_usd": round(unused * price_per_metric, 2),
         }
-        for name, vol, fb in offenders[:5]
+        for name, ingested, indexed, unused in offenders[:5]
     ]
 
     _detection_query = (
-        f'GET /api/v2/metrics/{top_metric}/volumes '
-        f'(tag_configurations inspected for forbidden tags: {sorted(_FORBIDDEN_TAGS)!r})'
+        f"GET /api/v2/metrics/{{name}}/volumes  -> "
+        f"flag ingested_volume>>indexed_volume "
+        f"(top: {top_metric}: {top_ingested:,} ingested / {top_indexed:,} queried)"
     )
+
+    indexed_ratio_pct = (top_indexed / top_ingested * 100) if top_ingested > 0 else 0
     _why = (
-        f"{top_metric} uses forbidden tag(s) {top_forbidden!r} that inflate cardinality "
-        f"to {top_volume:,} timeseries at ${price_per_metric:.4f}/timeseries = "
-        f"${current_cost:.2f}/month; dropping them reduces volume by "
-        f"~{cardinality_reduction * 100:.0f}% saving ${savings:.2f}/month."
+        f"{len(offenders)} metric(s) ingest cardinality they never index/query. "
+        f"Top offender: {top_metric} ingests {top_ingested:,} timeseries but only "
+        f"indexes {top_indexed:,} ({indexed_ratio_pct:.1f}%) — "
+        f"{top_unused:,} ingested-but-never-indexed timeseries at "
+        f"${price_per_metric:.4f}/timeseries = "
+        f"${top_unused * price_per_metric:.2f}/month wasted. "
+        f"Metrics-without-Limits lets you configure which tag combinations to keep, "
+        f"eliminating the ingested-but-never-indexed cost."
     )
 
     return {
         "id": _make_id("high_cardinality_metric", top_metric),
         "lever": "high_cardinality_metric",
         "category": "metrics",
-        "title": f"Drop high-cardinality tags from {top_metric}",
+        "title": f"Reduce ingested cardinality on {top_metric} via Metrics-without-Limits",
         "summary": (
-            f"{top_metric} uses forbidden tag(s) {top_forbidden!r} that "
-            f"explode cardinality to {top_volume:,} timeseries. "
-            f"Removing them reduces volume by ~{cardinality_reduction * 100:.0f}%."
+            f"{len(offenders)} metric(s) ingest cardinality they never query. "
+            f"Top: {top_metric} ingests {top_ingested:,} timeseries, "
+            f"queries only {top_indexed:,} ({indexed_ratio_pct:.1f}%). "
+            f"Metrics-without-Limits eliminates the {top_unused:,} unused timeseries."
         ),
-        "monthly_savings_usd": round(savings, 2),
-        "savings_pct": _savings_pct_str(savings, current_cost),
-        "effort": "high",
-        "confidence": "medium",
+        "monthly_savings_usd": round(monthly_savings_usd, 2),
+        "savings_pct": _savings_pct_str(monthly_savings_usd, total_unused * price_per_metric),
+        "effort": "medium",
+        "confidence": "high",
         "evidence": evidence,
         "generated_config": generated_config,
         "needs_write_scope": True,
@@ -972,15 +1006,26 @@ def scan(
         notes.append(f"Logs indexes fetch failed: {type(exc).__name__}")
 
     # --- Fetch metrics data ---
+    import time as _time
     metrics_volumes: dict[str, dict] = {}
     try:
         metrics_list = _fetch_metrics_list(api_key, app_key, site)
         metric_names = [m["id"] for m in metrics_list.get("data", []) if "id" in m]
-        for metric_name in metric_names[:20]:  # cap at 20 to avoid rate limits
+        for i, metric_name in enumerate(metric_names[:60]):  # cap at 60 metrics
             try:
                 metrics_volumes[metric_name] = _fetch_metric_volumes(metric_name, api_key, app_key, site)
+            except dd_client.RateLimitError:
+                # Back off and retry once on 429
+                _time.sleep(2)
+                try:
+                    metrics_volumes[metric_name] = _fetch_metric_volumes(metric_name, api_key, app_key, site)
+                except dd_client.DatadogError:
+                    pass
             except dd_client.DatadogError:
                 pass
+            # Small courtesy sleep every 10 requests to respect rate limits
+            if i > 0 and i % 10 == 0:
+                _time.sleep(0.5)
     except dd_client.DatadogError as exc:
         notes.append(f"Metrics list fetch failed: {type(exc).__name__}")
 
