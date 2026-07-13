@@ -1815,7 +1815,7 @@ def render_log_cost_map(scan: dict) -> str:
   </div>
   <div style="font-size:0.82rem;font-weight:700;color:#059669;
               min-width:60px;text-align:right;font-variant-numeric:tabular-nums;
-              flex-shrink:0;">{_fmt_usd(cost)}</div>
+              flex-shrink:0;" data-usd="{cost}" data-price-key="indexed_log_per_million">{_fmt_usd(cost)}</div>
   <div style="font-size:0.72rem;color:#94a3b8;min-width:36px;text-align:right;
               flex-shrink:0;">{share:.1f}%</div>
 </div>"""
@@ -1830,7 +1830,7 @@ def render_log_cost_map(scan: dict) -> str:
       Log Cost Map &mdash; Where Does Your Log Spend Go?
     </h2>
     <span style="font-size:0.82rem;color:#64748b;">
-      Total: <strong style="color:#059669;font-variant-numeric:tabular-nums;">{_fmt_usd(total_usd)}/mo</strong>
+      Total: <strong style="color:#059669;font-variant-numeric:tabular-nums;"><span data-usd="{total_usd}" data-price-key="indexed_log_per_million">{_fmt_usd(total_usd)}</span>/mo</strong>
       across <strong>{len(cost_map)}</strong> bucket{'s' if len(cost_map) != 1 else ''}
     </span>
   </div>
