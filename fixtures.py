@@ -334,6 +334,21 @@ SAMPLE_SCAN = {
         "Top opportunity: archive CDN/LB 2xx logs (low risk, high confidence). Implement logs-to-metrics conversion and exclusion filter in parallel.",
         "Monitor index quota closely: main index trending toward retention limits. Consider tiered retention (hot/cold storage) after quota reduction.",
     ],
+    "log_cost_map": [
+        {"service": "aws",         "status": "debug", "monthly_events": 1_100_000_000, "monthly_cost_usd": 1870.0,  "share_pct": 38.7},
+        {"service": "nginx",       "status": "200",   "monthly_events": 343_000_000,   "monthly_cost_usd": 583.1,   "share_pct": 12.1},
+        {"service": "payment",     "status": "debug", "monthly_events": 150_000_000,   "monthly_cost_usd": 255.0,   "share_pct": 5.3},
+        {"service": "health",      "status": "200",   "monthly_events": 128_000_000,   "monthly_cost_usd": 217.6,   "share_pct": 4.5},
+        {"service": "cdn-prod",    "status": "200",   "monthly_events": 85_000_000,    "monthly_cost_usd": 144.5,   "share_pct": 3.0},
+        {"service": "api",         "status": "error", "monthly_events": 42_000_000,    "monthly_cost_usd": 71.4,    "share_pct": 1.5},
+        {"service": "api",         "status": "info",  "monthly_events": 38_000_000,    "monthly_cost_usd": 64.6,    "share_pct": 1.3},
+        {"service": "api",         "status": "warn",  "monthly_events": 12_000_000,    "monthly_cost_usd": 20.4,    "share_pct": 0.4},
+        {"service": "scheduler",   "status": "debug", "monthly_events": 9_000_000,     "monthly_cost_usd": 15.3,    "share_pct": 0.3},
+        {"service": "worker",      "status": "200",   "monthly_events": 6_000_000,     "monthly_cost_usd": 10.2,    "share_pct": 0.2},
+        {"service": "cdn-edge",    "status": "200",   "monthly_events": 4_500_000,     "monthly_cost_usd": 7.65,    "share_pct": 0.2},
+        {"service": "metrics-svc", "status": "info",  "monthly_events": 2_000_000,     "monthly_cost_usd": 3.4,     "share_pct": 0.1},
+    ],
+    "log_total_monthly_cost_usd": 3263.15,
 }
 
 

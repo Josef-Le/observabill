@@ -1759,6 +1759,94 @@ def render_settings_panel(price_source: str = "list") -> str:
 </div>"""
 
 
+# ── render_log_cost_map ────────────────────────────────────────────────────────
+
+def render_log_cost_map(scan: dict) -> str:
+    """
+    Log Cost Map section: header + total + horizontal bar chart of all buckets.
+
+    Each row: service+status | monthly events | $ | share-of-total bar (green).
+    Mobile-ok, clean, escaped HTML.
+    """
+    cost_map = scan.get("log_cost_map", [])
+    total_usd = float(scan.get("log_total_monthly_cost_usd", 0.0))
+
+    if not cost_map:
+        return """
+<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;
+            padding:24px 26px;margin-bottom:28px;">
+  <h2 style="margin:0 0 6px 0;font-size:1rem;">Log Cost Map &mdash; Where Does Your Log Spend Go?</h2>
+  <p style="color:#64748b;font-size:0.85rem;margin:0;">No log aggregate data available.</p>
+</div>"""
+
+    max_cost = max((r["monthly_cost_usd"] for r in cost_map), default=1.0)
+    if max_cost <= 0:
+        max_cost = 1.0
+
+    rows_html = ""
+    for row in cost_map:
+        service   = _esc(str(row.get("service", "")))
+        status    = _esc(str(row.get("status", "")))
+        monthly_e = int(row.get("monthly_events", 0))
+        cost      = float(row.get("monthly_cost_usd", 0.0))
+        share     = float(row.get("share_pct", 0.0))
+        bar_pct   = max(2, int(cost / max_cost * 100))
+
+        # Format events compactly
+        if monthly_e >= 1_000_000_000:
+            events_str = f"{monthly_e / 1_000_000_000:.1f}B"
+        elif monthly_e >= 1_000_000:
+            events_str = f"{monthly_e / 1_000_000:.1f}M"
+        else:
+            events_str = f"{monthly_e:,}"
+
+        rows_html += f"""
+<div style="display:flex;align-items:center;gap:10px;padding:7px 0;
+            border-bottom:1px solid #f1f5f9;flex-wrap:wrap;">
+  <div style="min-width:160px;max-width:200px;font-size:0.82rem;
+              font-weight:600;color:#0f172a;overflow:hidden;
+              text-overflow:ellipsis;white-space:nowrap;flex-shrink:0;"
+       title="{service} [{status}]">{service} <span style="color:#64748b;font-weight:400;">[{status}]</span></div>
+  <div style="font-size:0.78rem;color:#64748b;min-width:60px;text-align:right;
+              font-variant-numeric:tabular-nums;flex-shrink:0;">{_esc(events_str)}/mo</div>
+  <div style="flex:1;min-width:80px;background:#f1f5f9;border-radius:4px;height:10px;overflow:hidden;">
+    <div style="width:{bar_pct}%;height:100%;
+                background:linear-gradient(90deg,#059669,#10b981);border-radius:4px;"></div>
+  </div>
+  <div style="font-size:0.82rem;font-weight:700;color:#059669;
+              min-width:60px;text-align:right;font-variant-numeric:tabular-nums;
+              flex-shrink:0;">{_fmt_usd(cost)}</div>
+  <div style="font-size:0.72rem;color:#94a3b8;min-width:36px;text-align:right;
+              flex-shrink:0;">{share:.1f}%</div>
+</div>"""
+
+    return f"""
+<div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;
+            padding:24px 26px;margin-bottom:28px;
+            box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+  <div style="display:flex;align-items:baseline;justify-content:space-between;
+              flex-wrap:wrap;gap:8px;margin-bottom:16px;">
+    <h2 style="margin:0;font-size:1rem;color:#0f172a;">
+      Log Cost Map &mdash; Where Does Your Log Spend Go?
+    </h2>
+    <span style="font-size:0.82rem;color:#64748b;">
+      Total: <strong style="color:#059669;font-variant-numeric:tabular-nums;">{_fmt_usd(total_usd)}/mo</strong>
+      across <strong>{len(cost_map)}</strong> bucket{'s' if len(cost_map) != 1 else ''}
+    </span>
+  </div>
+  <div style="display:flex;font-size:0.7rem;font-weight:700;letter-spacing:0.8px;
+              text-transform:uppercase;color:#94a3b8;padding-bottom:6px;
+              border-bottom:2px solid #f1f5f9;gap:10px;flex-wrap:wrap;">
+    <div style="min-width:160px;flex-shrink:0;">Service [status]</div>
+    <div style="min-width:60px;text-align:right;flex-shrink:0;">Events</div>
+    <div style="flex:1;min-width:80px;">Share</div>
+    <div style="min-width:60px;text-align:right;flex-shrink:0;">$/mo</div>
+    <div style="min-width:36px;text-align:right;flex-shrink:0;">%</div>
+  </div>
+  {rows_html}
+</div>"""
+
+
 # ── render_dashboard ───────────────────────────────────────────────────────────
 
 def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str = "") -> str:
@@ -1804,9 +1892,10 @@ def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str =
     price_source  = scan.get("price_source", "list")
     settings_html = render_settings_panel(price_source)
 
-    hero_html  = render_hero(scan)
-    scope_html = render_scope_checklist(scan.get("scope_check", {}))
-    table_html = render_lever_table(scan, write_enabled, apply_token=apply_token)
+    hero_html     = render_hero(scan)
+    scope_html    = render_scope_checklist(scan.get("scope_check", {}))
+    cost_map_html = render_log_cost_map(scan) if scan.get("log_cost_map") else ""
+    table_html    = render_lever_table(scan, write_enabled, apply_token=apply_token)
 
     return f"""
 <style>{DASHBOARD_CSS}</style>
@@ -1816,6 +1905,7 @@ def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str =
   {hero_html}
   {scope_html}
   {stats_html}
+  {cost_map_html}
   {table_html}
 </div>"""
 
@@ -1981,6 +2071,21 @@ _SAMPLE_SCAN = {
             "needs_write_scope": True,
         },
     ],
+    "log_cost_map": [
+        {"service": "aws",         "status": "debug", "monthly_events": 1_100_000_000, "monthly_cost_usd": 1870.0,  "share_pct": 38.7},
+        {"service": "nginx",       "status": "200",   "monthly_events": 343_000_000,   "monthly_cost_usd": 583.1,   "share_pct": 12.1},
+        {"service": "payment",     "status": "debug", "monthly_events": 150_000_000,   "monthly_cost_usd": 255.0,   "share_pct": 5.3},
+        {"service": "health",      "status": "200",   "monthly_events": 128_000_000,   "monthly_cost_usd": 217.6,   "share_pct": 4.5},
+        {"service": "auth",        "status": "201",   "monthly_events": 85_000_000,    "monthly_cost_usd": 144.5,   "share_pct": 3.0},
+        {"service": "api",         "status": "error", "monthly_events": 42_000_000,    "monthly_cost_usd": 71.4,    "share_pct": 1.5},
+        {"service": "api",         "status": "info",  "monthly_events": 38_000_000,    "monthly_cost_usd": 64.6,    "share_pct": 1.3},
+        {"service": "api",         "status": "warn",  "monthly_events": 12_000_000,    "monthly_cost_usd": 20.4,    "share_pct": 0.4},
+        {"service": "scheduler",   "status": "debug", "monthly_events": 9_000_000,     "monthly_cost_usd": 15.3,    "share_pct": 0.3},
+        {"service": "worker",      "status": "200",   "monthly_events": 6_000_000,     "monthly_cost_usd": 10.2,    "share_pct": 0.2},
+        {"service": "cdn",         "status": "200",   "monthly_events": 4_500_000,     "monthly_cost_usd": 7.65,    "share_pct": 0.2},
+        {"service": "metrics-svc", "status": "info",  "monthly_events": 2_000_000,     "monthly_cost_usd": 3.4,     "share_pct": 0.1},
+    ],
+    "log_total_monthly_cost_usd": 4830.0,
 }
 
 

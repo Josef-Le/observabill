@@ -384,6 +384,328 @@ def derive_effective_prices(
 
 
 # ---------------------------------------------------------------------------
+# Log Cost Map helpers
+# ---------------------------------------------------------------------------
+
+def build_log_cost_map(
+    logs_aggregate: dict,
+    prices: dict[str, float],
+) -> list[dict]:
+    """Build a cost map from logs aggregate buckets.
+
+    Returns a list of dicts sorted desc by monthly_cost_usd, each:
+    {service, status, monthly_events, monthly_cost_usd, share_pct}
+    Includes ALL buckets (not just noise candidates).
+    """
+    price_per_million = prices["indexed_log_per_million"]
+    buckets = logs_aggregate.get("data", {}).get("buckets", [])
+
+    rows = []
+    for bucket in buckets:
+        by = bucket.get("by", {})
+        service = str(by.get("service", "unknown"))
+        status = str(by.get("status", ""))
+        count_7d = int(bucket.get("computes", {}).get("c0", 0))
+        monthly = _extrapolate_to_monthly(count_7d)
+        cost = monthly / 1_000_000 * price_per_million
+        rows.append({
+            "service": service,
+            "status": status,
+            "monthly_events": int(monthly),
+            "monthly_cost_usd": round(cost, 2),
+            "share_pct": 0.0,  # computed below
+        })
+
+    # Sort desc by cost
+    rows.sort(key=lambda r: r["monthly_cost_usd"], reverse=True)
+
+    # Compute share_pct
+    total_cost = sum(r["monthly_cost_usd"] for r in rows)
+    for row in rows:
+        if total_cost > 0:
+            row["share_pct"] = round(row["monthly_cost_usd"] / total_cost * 100, 2)
+        else:
+            row["share_pct"] = 0.0
+
+    return rows
+
+
+def build_log_total_cost(cost_map: list[dict]) -> float:
+    """Return sum of all monthly_cost_usd values in a cost map."""
+    return round(sum(r["monthly_cost_usd"] for r in cost_map), 2)
+
+
+# ---------------------------------------------------------------------------
+# Whale drill — secondary facet query for top noisy buckets
+# ---------------------------------------------------------------------------
+
+_DRILL_FACETS = [
+    "@http.url_details.path",
+    "@http.method",
+    "host",
+    "source",
+]
+_MAX_WHALE_DRILL = 3   # drill at most top 3 whales
+_MAX_OPPORTUNITIES = 8  # cap on per-bucket opportunities
+
+
+def _fetch_facet_drill(
+    service: str,
+    status: str,
+    facet: str,
+    api_key: str,
+    app_key: str,
+    site: str,
+) -> list[dict]:
+    """POST aggregate grouped by service+facet for the specific (service, status) bucket.
+
+    Returns list of {facet_value, monthly_events} sorted desc, or [] on error/empty.
+    """
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    seven_days_ago = now - timedelta(days=7)
+
+    payload = {
+        "compute": [{"aggregation": "count", "type": "total", "metric": "count"}],
+        "filter": {
+            "from": seven_days_ago.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "indexes": ["*"],
+            "query": f"service:{service} status:{status}",
+        },
+        "group_by": [
+            {
+                "facet": facet,
+                "limit": 10,
+                "sort": {"order": "desc", "type": "measure", "aggregation": "count"},
+            },
+        ],
+        "options": {"timezone": "UTC"},
+    }
+    try:
+        resp = _post("/api/v2/logs/analytics/aggregate", payload, api_key, app_key, site)
+    except dd_client.DatadogError:
+        return []
+
+    buckets = resp.get("data", {}).get("buckets", [])
+    result = []
+    for bucket in buckets:
+        by = bucket.get("by", {})
+        facet_val = str(by.get(facet, ""))
+        if not facet_val:
+            continue
+        count_7d = int(bucket.get("computes", {}).get("c0", 0))
+        monthly = int(_extrapolate_to_monthly(count_7d))
+        result.append({"facet_value": facet_val, "monthly_events": monthly})
+    return result
+
+
+def _drill_whale(
+    service: str,
+    status: str,
+    api_key: str,
+    app_key: str,
+    site: str,
+) -> tuple[str, list[dict]]:
+    """Try each drill facet in order; return (facet_used, patterns) for first non-empty result.
+
+    Returns ("", []) if all facets are empty or error.
+    """
+    for facet in _DRILL_FACETS:
+        patterns = _fetch_facet_drill(service, status, facet, api_key, app_key, site)
+        if patterns:
+            return facet, patterns
+    return "", []
+
+
+# ---------------------------------------------------------------------------
+# Detector 1b — Multi-opportunity exclusion filter candidates
+# ---------------------------------------------------------------------------
+
+def detect_exclusion_candidates_multi(
+    logs_aggregate: dict,
+    logs_indexes: dict,
+    prices: dict[str, float] = DEFAULT_PRICES,
+    api_key: str = "",
+    app_key: str = "",
+    site: str = "us1",
+    whale_drill: bool = False,
+) -> list[dict]:
+    """Emit a SEPARATE SavingsOpportunity for EACH significant noisy bucket.
+
+    Criteria:
+    - status is debug OR 2xx (200, 201, etc.)
+    - monthly_events >= 1,000,000
+    - Cap at 8 opportunities
+    - Sorted by savings desc
+
+    When api_key/app_key/site are provided and whale_drill=True, attaches sub-patterns
+    for the top 1-3 buckets via a secondary facet query.
+
+    Parameters
+    ----------
+    logs_aggregate : response from POST /api/v2/logs/analytics/aggregate
+    logs_indexes   : response from GET /api/v1/logs/config/indexes
+    prices         : pricing dict
+    api_key        : optional — needed for whale drill
+    app_key        : optional — needed for whale drill
+    site           : Datadog site
+    whale_drill    : if True, runs secondary facet queries for top buckets
+
+    Returns
+    -------
+    list of SavingsOpportunity dicts (may be empty)
+    """
+    price_per_million = prices["indexed_log_per_million"]
+    buckets = logs_aggregate.get("data", {}).get("buckets", [])
+
+    # Pick target index
+    indexes = logs_indexes.get("indexes", [])
+    target_index = indexes[0]["name"] if indexes else "main"
+
+    # Build candidates list
+    candidates: list[dict] = []
+    for bucket in buckets:
+        by = bucket.get("by", {})
+        service = str(by.get("service", "unknown"))
+        status = str(by.get("status", ""))
+        count_7d = int(bucket.get("computes", {}).get("c0", 0))
+        monthly = _extrapolate_to_monthly(count_7d)
+
+        if not (_is_noise_status(status) and monthly >= _MIN_MONTHLY_EVENTS_THRESHOLD):
+            continue
+
+        cost = monthly / 1_000_000 * price_per_million
+        candidates.append({
+            "service": service,
+            "status": status,
+            "monthly_events": int(monthly),
+            "monthly_cost_usd": round(cost, 2),
+        })
+
+    if not candidates:
+        return []
+
+    # Sort desc by cost, cap at _MAX_OPPORTUNITIES
+    candidates.sort(key=lambda c: c["monthly_cost_usd"], reverse=True)
+    candidates = candidates[:_MAX_OPPORTUNITIES]
+
+    # Whale drill for top 1-3
+    drill_results: dict[int, tuple[str, list[dict]]] = {}
+    if whale_drill and api_key and app_key:
+        for idx in range(min(_MAX_WHALE_DRILL, len(candidates))):
+            c = candidates[idx]
+            facet, patterns = _drill_whale(c["service"], c["status"], api_key, app_key, site)
+            drill_results[idx] = (facet, patterns)
+
+    # Build one SavingsOpportunity per candidate
+    opportunities: list[dict] = []
+    for idx, cand in enumerate(candidates):
+        service = cand["service"]
+        status = cand["status"]
+        monthly_events = cand["monthly_events"]
+        monthly_cost = cand["monthly_cost_usd"]
+
+        # Evidence: single row for this bucket
+        evidence = [
+            {
+                "label": f"{service} [{status}]",
+                "volume": f"{monthly_events / 1_000_000:.1f}M events/month",
+                "cost_usd": monthly_cost,
+            }
+        ]
+
+        # Primary exclusion query
+        primary_query = f"service:{service} status:{status}"
+
+        # Optional drill sub-patterns
+        drill_facet = ""
+        drill_patterns: list[dict] = []
+        if idx in drill_results:
+            drill_facet, drill_patterns = drill_results[idx]
+
+        # Build a more specific exclusion query when drill found a top pattern
+        more_specific_query = primary_query
+        if drill_patterns and drill_facet:
+            top_val = drill_patterns[0]["facet_value"]
+            more_specific_query = f"{primary_query} {drill_facet}:{top_val}"
+
+        generated_config = {
+            "endpoint": f"/api/v1/logs/config/indexes/{target_index}",
+            "verb": "PUT",
+            "payload": {
+                "exclusion_filters": [
+                    {
+                        "name": f"auto-exclude-{service}-{status}".lower()
+                               .replace(".", "-").replace("@", "").replace("/", "-"),
+                        "filter": {
+                            "query": more_specific_query if drill_patterns else primary_query,
+                            "sample_rate": 1.0,
+                        },
+                        "is_enabled": True,
+                    }
+                ]
+            },
+        }
+
+        detection_query = (
+            f"POST /api/v2/logs/analytics/aggregate "
+            f"group_by service,status "
+            f"(bucket: service:{service} status:{status})"
+        )
+        if drill_facet and drill_patterns:
+            top_pattern = drill_patterns[0]["facet_value"]
+            detection_query += (
+                f"\n+ facet drill on {drill_facet} "
+                f"→ top pattern: {top_pattern}"
+            )
+
+        why = (
+            f"service:{service} status:{status} generates "
+            f"{monthly_events / 1_000_000:.1f}M indexable events/month at "
+            f"${price_per_million:.2f}/million = ${monthly_cost:.2f}/month; "
+            f"safe to exclude because {status} logs carry no actionable signal."
+        )
+        if drill_patterns and drill_facet:
+            top_patterns_str = ", ".join(p["facet_value"] for p in drill_patterns[:3])
+            why += f" Top {drill_facet} patterns: {top_patterns_str}."
+
+        opp: dict = {
+            "id": _make_id("exclusion_filter", f"{service}-{status}"),
+            "lever": "exclusion_filter",
+            "category": "logs",
+            "service": service,
+            "status": status,
+            "monthly_events": monthly_events,
+            "monthly_cost_usd": monthly_cost,
+            "title": f"Exclude high-volume {status} logs for {service}",
+            "summary": (
+                f"{service} [{status}] generates "
+                f"{monthly_events / 1_000_000:.1f}M indexable events/month "
+                f"that can be safely excluded."
+            ),
+            "monthly_savings_usd": monthly_cost,
+            "savings_pct": "100%",
+            "effort": "low",
+            "confidence": "high",
+            "evidence": evidence,
+            "generated_config": generated_config,
+            "needs_write_scope": True,
+            "detection_query": detection_query,
+            "why": why,
+        }
+
+        if drill_facet:
+            opp["drill_facet"] = drill_facet
+        if drill_patterns is not None:
+            opp["drill_patterns"] = drill_patterns
+
+        opportunities.append(opp)
+
+    return opportunities
+
+
+# ---------------------------------------------------------------------------
 # Detector 1 — Exclusion filter candidates
 # ---------------------------------------------------------------------------
 
@@ -1029,12 +1351,24 @@ def scan(
     except dd_client.DatadogError as exc:
         notes.append(f"Metrics list fetch failed: {type(exc).__name__}")
 
+    # --- Build log cost map (ALL buckets, for UI display) ---
+    log_cost_map: list[dict] = build_log_cost_map(logs_aggregate, effective_prices)
+    log_total_monthly_cost_usd: float = build_log_total_cost(log_cost_map)
+
     # --- Run detectors ---
     opportunities: list[dict] = []
 
-    opp = detect_exclusion_candidates(logs_aggregate, logs_indexes, prices=effective_prices)
-    if opp is not None:
-        opportunities.append(opp)
+    # Detector 1: multi-opportunity exclusion filter (one per noisy bucket) with whale drill
+    multi_excl = detect_exclusion_candidates_multi(
+        logs_aggregate=logs_aggregate,
+        logs_indexes=logs_indexes,
+        prices=effective_prices,
+        api_key=api_key,
+        app_key=app_key,
+        site=site,
+        whale_drill=True,
+    )
+    opportunities.extend(multi_excl)
 
     opp = detect_logs_to_metrics(logs_aggregate, logs_indexes, prices=effective_prices)
     if opp is not None:
@@ -1077,6 +1411,8 @@ def scan(
         "notes": notes,
         "scope_check": scope_check,
         "price_source": price_source,
+        "log_cost_map": log_cost_map,
+        "log_total_monthly_cost_usd": log_total_monthly_cost_usd,
     }
 
 
