@@ -10,6 +10,13 @@ services:
     envVars:
       - key: ADMIN_TOKEN
         sync: false
+      - key: OBSERVABILL_WEBHOOK_SECRET
+        sync: false
+      # Persistent disk holds policy.json / creds.json / watchdog_state.json (0600).
+      - key: OBSERVABILL_DATA_DIR
+        value: /var/data
+      # Hourly protection scheduler stays OFF until explicitly enabled (safe first deploy).
+      # To turn on continuous protection later, set OBSERVABILL_ENABLE_SCHEDULER=1.
       - key: PUBLIC_URL
         value: https://observabill.onrender.com
     disk:

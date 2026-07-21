@@ -1,0 +1,14 @@
+# Runtime state — NEVER commit (may contain credentials / customer data)
+data/
+*.audit
+policy.json
+creds.json
+watchdog_state.json
+funnel.txt
+reserves.txt
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/

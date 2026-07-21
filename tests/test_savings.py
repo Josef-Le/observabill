@@ -30,6 +30,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import savings  # noqa: E402  — must exist for tests to pass
+import dd_client  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +165,8 @@ def _validate_opportunity(opp: dict) -> None:
     """Assert a dict is a valid SavingsOpportunity."""
     assert isinstance(opp["id"], str) and opp["id"], "id must be non-empty string"
     assert opp["lever"] in (
-        "exclusion_filter", "logs_to_metrics", "high_cardinality_metric", "index_quota"
+        "exclusion_filter", "logs_to_metrics", "high_cardinality_metric", "index_quota",
+        "pattern_exclusion", "field_bloat",
     ), f"Unknown lever: {opp['lever']}"
     assert opp["category"] in ("logs", "metrics"), f"Unknown category: {opp['category']}"
     assert isinstance(opp["title"], str) and opp["title"]
@@ -200,188 +202,17 @@ def _validate_scan_result(result: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 1. detect_exclusion_candidates
+# 1. (removed) detect_exclusion_candidates — deleted in v2 refactor.
+#    The shallow aggregate-count exclusion detector was replaced by
+#    logs_intel.py content-sampling (detect_pattern_opportunities).
 # ---------------------------------------------------------------------------
-
-class TestDetectExclusionCandidates:
-    def test_returns_opportunity_for_high_volume_200_service(self):
-        """High-volume 200-status service should produce an exclusion_filter opportunity."""
-        opp = savings.detect_exclusion_candidates(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        assert opp is not None
-        _validate_opportunity(opp)
-        assert opp["lever"] == "exclusion_filter"
-        assert opp["category"] == "logs"
-
-    def test_exclusion_candidate_savings_math(self):
-        """monthly_savings_usd = excluded_events/1e6 * price_per_million."""
-        prices = dict(savings.DEFAULT_PRICES)
-        prices["indexed_log_per_million"] = 2.0  # easy math
-
-        opp = savings.detect_exclusion_candidates(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-            prices=prices,
-        )
-        assert opp is not None
-        # api-gateway 200: 45M/7d * 30 = ~192.8M/month, cdn-proxy: 60M/7d*30=257M/month,
-        # health-checker: 30M/7d*30=128.5M/month, payment 200: 8M/7d*30=34.3M/month
-        # total 200/DEBUG candidates summed. At min the top candidate should be > 0
-        assert opp["monthly_savings_usd"] > 0.0
-
-    def test_exclusion_generated_config_is_put_index(self):
-        """generated_config must be a PUT to /api/v1/logs/config/indexes/{index}."""
-        opp = savings.detect_exclusion_candidates(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        gc = opp["generated_config"]
-        assert gc["verb"] == "PUT"
-        assert "/api/v1/logs/config/indexes/" in gc["endpoint"]
-        # payload must have exclusion_filters key
-        assert "exclusion_filters" in gc["payload"]
-
-    def test_exclusion_needs_write_scope(self):
-        opp = savings.detect_exclusion_candidates(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        assert opp["needs_write_scope"] is True
-
-    def test_exclusion_evidence_lists_top_services(self):
-        """Evidence list must contain at least one entry with label/volume/cost_usd."""
-        opp = savings.detect_exclusion_candidates(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        assert len(opp["evidence"]) >= 1
-        for ev in opp["evidence"]:
-            assert ev["cost_usd"] >= 0.0
-
-    def test_exclusion_returns_none_when_no_high_volume_services(self):
-        """Returns None when all services are low-volume (below threshold)."""
-        minimal_aggregate = {
-            "data": {
-                "buckets": [
-                    {"by": {"service": "quiet-svc", "status": "200"}, "computes": {"c0": 100}},
-                ]
-            }
-        }
-        opp = savings.detect_exclusion_candidates(
-            logs_aggregate=minimal_aggregate,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        assert opp is None
-
-    def test_exclusion_prices_override_changes_savings(self):
-        """Doubling price should double savings."""
-        base = dict(savings.DEFAULT_PRICES)
-        doubled = dict(savings.DEFAULT_PRICES)
-        doubled["indexed_log_per_million"] = base["indexed_log_per_million"] * 2
-
-        opp_base = savings.detect_exclusion_candidates(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-            prices=base,
-        )
-        opp_doubled = savings.detect_exclusion_candidates(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-            prices=doubled,
-        )
-        assert opp_doubled is not None and opp_base is not None
-        assert abs(opp_doubled["monthly_savings_usd"] - opp_base["monthly_savings_usd"] * 2) < 0.01
 
 
 # ---------------------------------------------------------------------------
-# 2. detect_logs_to_metrics
+# 2. (removed) detect_logs_to_metrics — deleted in v2 refactor.
+#    The shallow logs-to-metrics heuristic (single-status service detector)
+#    was replaced by logs_intel.py content-sampling classify_template().
 # ---------------------------------------------------------------------------
-
-class TestDetectLogsToMetrics:
-    def test_returns_opportunity_for_cdn_health_check_pattern(self):
-        """High-volume low-variance 200 service (cdn-proxy) should surface logs_to_metrics."""
-        opp = savings.detect_logs_to_metrics(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        assert opp is not None
-        _validate_opportunity(opp)
-        assert opp["lever"] == "logs_to_metrics"
-        assert opp["category"] == "logs"
-
-    def test_logs_to_metrics_generated_config_is_post(self):
-        """generated_config must be POST /api/v1/logs-metrics."""
-        opp = savings.detect_logs_to_metrics(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        gc = opp["generated_config"]
-        assert gc["verb"] == "POST"
-        assert gc["endpoint"] == "/api/v1/logs-metrics"
-        assert "data" in gc["payload"]
-
-    def test_logs_to_metrics_needs_write_scope(self):
-        opp = savings.detect_logs_to_metrics(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        assert opp["needs_write_scope"] is True
-
-    def test_logs_to_metrics_no_forbidden_group_by_tags(self):
-        """generated_config payload must NOT group by user_id/trace_id/request_id/ip."""
-        opp = savings.detect_logs_to_metrics(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        payload_str = json.dumps(opp["generated_config"]["payload"])
-        for forbidden in ("user_id", "trace_id", "request_id", "ip"):
-            assert forbidden not in payload_str, f"Forbidden tag '{forbidden}' found in generated_config"
-
-    def test_logs_to_metrics_savings_positive(self):
-        """Savings must be positive: indexed_cost - metric_cost."""
-        opp = savings.detect_logs_to_metrics(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        assert opp["monthly_savings_usd"] > 0.0
-
-    def test_logs_to_metrics_prices_override(self):
-        """Price override changes the savings calculation."""
-        prices_low = dict(savings.DEFAULT_PRICES)
-        prices_low["indexed_log_per_million"] = 0.50
-
-        prices_high = dict(savings.DEFAULT_PRICES)
-        prices_high["indexed_log_per_million"] = 5.00
-
-        opp_low = savings.detect_logs_to_metrics(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-            prices=prices_low,
-        )
-        opp_high = savings.detect_logs_to_metrics(
-            logs_aggregate=LOGS_AGGREGATE_FIXTURE,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-            prices=prices_high,
-        )
-        assert opp_high["monthly_savings_usd"] > opp_low["monthly_savings_usd"]
-
-    def test_logs_to_metrics_returns_none_when_no_candidates(self):
-        """Returns None when all services have mixed statuses (not safe to convert)."""
-        mixed_aggregate = {
-            "data": {
-                "buckets": [
-                    {"by": {"service": "mixed-svc", "status": "200"}, "computes": {"c0": 100}},
-                    {"by": {"service": "mixed-svc", "status": "500"}, "computes": {"c0": 90}},
-                ]
-            }
-        }
-        opp = savings.detect_logs_to_metrics(
-            logs_aggregate=mixed_aggregate,
-            logs_indexes=LOGS_INDEXES_FIXTURE,
-        )
-        assert opp is None
 
 
 # ---------------------------------------------------------------------------
@@ -618,16 +449,20 @@ class TestScan:
     """Tests for the top-level scan() function via mock HTTP."""
 
     def _make_http_mock(self, monkeypatch):
-        """Patch savings._http_get to return fixture data based on URL path."""
+        """Patch savings._http_get/_http_post to return fixture data based on URL path."""
+
+        # Valid empty shapes for new v2 POST endpoints
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
+        _empty_ts = {"data": {"buckets": []}}
 
         def fake_http_get(url: str, headers: dict, timeout: int = 15):
             body: dict
-            if "/api/v2/logs/analytics/aggregate" in url:
-                body = LOGS_AGGREGATE_FIXTURE
-            elif "/api/v1/usage/logs" in url:
+            if "/api/v1/usage/logs" in url:
                 body = USAGE_LOGS_FIXTURE
             elif "/api/v1/logs/config/indexes" in url:
                 body = LOGS_INDEXES_FIXTURE
+            elif "/api/v2/logs/config/metrics" in url:
+                body = {"data": []}
             elif "/api/v2/metrics" in url and "/volumes" in url:
                 metric_name = url.split("/api/v2/metrics/")[1].split("/volumes")[0]
                 if "user.requests" in metric_name:
@@ -638,11 +473,21 @@ class TestScan:
                 body = METRICS_LIST_FIXTURE
             elif "/api/v1/usage/timeseries" in url:
                 body = USAGE_TIMESERIES_FIXTURE
+            elif "/api/v2/usage/estimated_cost" in url:
+                body = {}
             else:
                 body = {}
             return (200, {"content-type": "application/json"}, __import__("json").dumps(body).encode())
 
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 15):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {"content-type": "application/json"}, __import__("json").dumps(_empty_events).encode())
+            if "/api/v2/logs/analytics/aggregate" in url:
+                return (200, {"content-type": "application/json"}, __import__("json").dumps(LOGS_AGGREGATE_FIXTURE).encode())
+            return (200, {}, b"{}")
+
         monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
 
     def test_scan_returns_valid_scan_result(self, monkeypatch):
         """scan() returns a dict that passes _validate_scan_result."""
@@ -694,13 +539,15 @@ class TestScan:
 
     def test_scan_no_opportunities_when_all_detectors_return_none(self, monkeypatch):
         """scan() with trivial data returns empty opportunities list and zero waste."""
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
+
         def fake_http_get(url, headers, timeout=15):
-            if "/api/v2/logs/analytics/aggregate" in url:
-                body = {"data": {"buckets": []}}
-            elif "/api/v1/usage/logs" in url:
+            if "/api/v1/usage/logs" in url:
                 body = {"usage": []}
             elif "/api/v1/logs/config/indexes" in url:
                 body = {"indexes": [{"name": "main", "num_retention_days": 15, "daily_limit": 5_000_000, "exclusion_filters": []}]}
+            elif "/api/v2/logs/config/metrics" in url:
+                body = {"data": []}
             elif "/api/v2/metrics" in url and "/volumes" in url:
                 body = METRIC_VOLUMES_LOW_CARDINALITY
             elif "/api/v2/metrics" in url:
@@ -711,7 +558,14 @@ class TestScan:
                 body = {}
             return (200, {}, __import__("json").dumps(body).encode())
 
+        def fake_http_post(url, headers, body_bytes, timeout=15):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, __import__("json").dumps(_empty_events).encode())
+            # aggregate returns empty buckets
+            return (200, {}, __import__("json").dumps({"data": {"buckets": []}}).encode())
+
         monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
         result = savings.scan(api_key="k", app_key="a", site="us1")
         assert result["opportunities"] == []
         assert result["total_monthly_waste_usd"] == 0.0
@@ -765,13 +619,15 @@ class TestSecurityKeyNeverLeaks:
     FAKE_APP = "SENSITIVE_APP_KEY_NEVER_SHOULD_APPEAR"
 
     def _make_http_mock(self, monkeypatch):
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
+
         def fake_http_get(url: str, headers: dict, timeout: int = 15):
-            if "/api/v2/logs/analytics/aggregate" in url:
-                body = LOGS_AGGREGATE_FIXTURE
-            elif "/api/v1/usage/logs" in url:
+            if "/api/v1/usage/logs" in url:
                 body = USAGE_LOGS_FIXTURE
             elif "/api/v1/logs/config/indexes" in url:
                 body = LOGS_INDEXES_FIXTURE
+            elif "/api/v2/logs/config/metrics" in url:
+                body = {"data": []}
             elif "/api/v2/metrics" in url and "/volumes" in url:
                 body = METRIC_VOLUMES_HIGH_CARDINALITY
             elif "/api/v2/metrics" in url:
@@ -782,7 +638,15 @@ class TestSecurityKeyNeverLeaks:
                 body = {}
             return (200, {}, __import__("json").dumps(body).encode())
 
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 15):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, __import__("json").dumps(_empty_events).encode())
+            if "/api/v2/logs/analytics/aggregate" in url:
+                return (200, {}, __import__("json").dumps(LOGS_AGGREGATE_FIXTURE).encode())
+            return (200, {}, b"{}")
+
         monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
 
     def test_api_key_not_in_any_opportunity_field(self, monkeypatch):
         """API key must not appear in any field of any returned opportunity."""
@@ -814,7 +678,11 @@ class TestSecurityKeyNeverLeaks:
         def fail_http_get(url, headers, timeout=15):
             return (401, {}, b'{"errors": ["Invalid API key"]}')
 
+        def fail_http_post(url, headers, body_bytes, timeout=15):
+            return (401, {}, b'{"errors": ["Invalid API key"]}')
+
         monkeypatch.setattr(savings, "_http_get", fail_http_get)
+        monkeypatch.setattr(savings, "_http_post", fail_http_post)
 
         try:
             savings.scan(api_key=self.FAKE_KEY, app_key=self.FAKE_APP, site="us1")
@@ -901,7 +769,15 @@ class TestPreflightScopes:
                 if pattern in url:
                     return (code, {}, b'{"errors": ["Forbidden"]}' if code == 403 else b'{"data": []}')
             return (200, {}, b'{"data": []}')
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            for pattern, code in statuses.items():
+                if pattern in url:
+                    return (code, {}, b'{"errors": ["Forbidden"]}' if code == 403 else b'{}')
+            return (200, {}, b'{}')
+
         monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
 
     def test_preflight_returns_dict_with_required_keys(self, monkeypatch):
         """preflight_scopes returns a dict with logs_read, metrics_read, billing_read, usage_read, missing, unlocks."""
@@ -1110,43 +986,11 @@ class TestDeriveEffectivePrices:
 # ---------------------------------------------------------------------------
 
 class TestOpportunityTransparency:
-    """Every opportunity dict returned by detectors must carry detection_query + why."""
+    """Every opportunity dict returned by detectors must carry detection_query + why.
 
-    def test_exclusion_candidate_has_detection_query(self):
-        """detect_exclusion_candidates result must include 'detection_query' key."""
-        opp = savings.detect_exclusion_candidates(LOGS_AGGREGATE_FIXTURE, LOGS_INDEXES_FIXTURE)
-        assert opp is not None
-        assert "detection_query" in opp, "Missing detection_query in exclusion_filter opportunity"
-
-    def test_exclusion_candidate_detection_query_is_non_empty(self):
-        opp = savings.detect_exclusion_candidates(LOGS_AGGREGATE_FIXTURE, LOGS_INDEXES_FIXTURE)
-        assert isinstance(opp["detection_query"], str) and opp["detection_query"]
-
-    def test_exclusion_candidate_has_why(self):
-        """detect_exclusion_candidates result must include 'why' key."""
-        opp = savings.detect_exclusion_candidates(LOGS_AGGREGATE_FIXTURE, LOGS_INDEXES_FIXTURE)
-        assert "why" in opp, "Missing 'why' in exclusion_filter opportunity"
-
-    def test_exclusion_candidate_why_is_non_empty(self):
-        opp = savings.detect_exclusion_candidates(LOGS_AGGREGATE_FIXTURE, LOGS_INDEXES_FIXTURE)
-        assert isinstance(opp["why"], str) and opp["why"]
-
-    def test_logs_to_metrics_has_detection_query(self):
-        opp = savings.detect_logs_to_metrics(LOGS_AGGREGATE_FIXTURE, LOGS_INDEXES_FIXTURE)
-        assert opp is not None
-        assert "detection_query" in opp, "Missing detection_query in logs_to_metrics opportunity"
-
-    def test_logs_to_metrics_detection_query_is_non_empty(self):
-        opp = savings.detect_logs_to_metrics(LOGS_AGGREGATE_FIXTURE, LOGS_INDEXES_FIXTURE)
-        assert isinstance(opp["detection_query"], str) and opp["detection_query"]
-
-    def test_logs_to_metrics_has_why(self):
-        opp = savings.detect_logs_to_metrics(LOGS_AGGREGATE_FIXTURE, LOGS_INDEXES_FIXTURE)
-        assert "why" in opp, "Missing 'why' in logs_to_metrics opportunity"
-
-    def test_logs_to_metrics_why_is_non_empty(self):
-        opp = savings.detect_logs_to_metrics(LOGS_AGGREGATE_FIXTURE, LOGS_INDEXES_FIXTURE)
-        assert isinstance(opp["why"], str) and opp["why"]
+    NOTE: detect_exclusion_candidates and detect_logs_to_metrics were removed in
+    v2. Only high_cardinality_metric and index_quota tests remain here.
+    """
 
     def test_high_cardinality_metric_has_detection_query(self):
         metrics_volumes = {"custom.user.requests": METRIC_VOLUMES_HIGH_CARDINALITY}
@@ -1188,13 +1032,15 @@ class TestOpportunityTransparency:
 
     def test_scan_opportunities_have_detection_query_and_why(self, monkeypatch):
         """All opportunities in scan() output carry detection_query and why."""
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
+
         def fake_http_get(url: str, headers: dict, timeout: int = 15):
-            if "/api/v2/logs/analytics/aggregate" in url:
-                body = LOGS_AGGREGATE_FIXTURE
-            elif "/api/v1/usage/logs" in url:
+            if "/api/v1/usage/logs" in url:
                 body = USAGE_LOGS_FIXTURE
             elif "/api/v1/logs/config/indexes" in url:
                 body = LOGS_INDEXES_FIXTURE
+            elif "/api/v2/logs/config/metrics" in url:
+                body = {"data": []}
             elif "/api/v2/metrics" in url and "/volumes" in url:
                 body = METRIC_VOLUMES_HIGH_CARDINALITY
             elif "/api/v2/metrics" in url:
@@ -1204,7 +1050,16 @@ class TestOpportunityTransparency:
             else:
                 body = {}
             return (200, {}, json.dumps(body).encode())
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 15):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, json.dumps(_empty_events).encode())
+            if "/api/v2/logs/analytics/aggregate" in url:
+                return (200, {}, json.dumps(LOGS_AGGREGATE_FIXTURE).encode())
+            return (200, {}, b"{}")
+
         monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
         result = savings.scan(api_key="test_key", app_key="test_app_key", site="us1")
         for opp in result["opportunities"]:
             assert "detection_query" in opp, f"Opportunity {opp.get('id')} missing detection_query"
@@ -1226,6 +1081,7 @@ class TestScanScopeCheckAndPriceSource:
     def _make_full_mock(self, monkeypatch, extra_statuses=None):
         """Mock all endpoints to return 200 + fixture data."""
         extra_statuses = extra_statuses or {}
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
 
         def fake_http_get(url: str, headers: dict, timeout: int = 15):
             # Check for forced-status overrides first
@@ -1234,12 +1090,12 @@ class TestScanScopeCheckAndPriceSource:
                     body = b'{"errors":["Forbidden"]}' if code == 403 else b'{}'
                     return (code, {}, body)
             # Normal fixture responses
-            if "/api/v2/logs/analytics/aggregate" in url:
-                body = LOGS_AGGREGATE_FIXTURE
-            elif "/api/v1/usage/logs" in url:
+            if "/api/v1/usage/logs" in url:
                 body = USAGE_LOGS_FIXTURE
             elif "/api/v1/logs/config/indexes" in url:
                 body = LOGS_INDEXES_FIXTURE
+            elif "/api/v2/logs/config/metrics" in url:
+                body = {"data": []}
             elif "/api/v2/metrics" in url and "/volumes" in url:
                 body = METRIC_VOLUMES_HIGH_CARDINALITY
             elif "/api/v2/metrics" in url:
@@ -1250,7 +1106,15 @@ class TestScanScopeCheckAndPriceSource:
                 body = {}
             return (200, {}, json.dumps(body).encode())
 
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 15):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, json.dumps(_empty_events).encode())
+            if "/api/v2/logs/analytics/aggregate" in url:
+                return (200, {}, json.dumps(LOGS_AGGREGATE_FIXTURE).encode())
+            return (200, {}, b"{}")
+
         monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
 
     def test_scan_attaches_scope_check(self, monkeypatch):
         """scan() result must include 'scope_check' key."""
@@ -1318,3 +1182,400 @@ class TestScanScopeCheckAndPriceSource:
         result = savings.scan(api_key=self.FAKE_KEY, app_key=self.FAKE_APP, site="us1")
         # existing contract must still hold
         _validate_scan_result(result)
+
+    def test_scan_attaches_bill_share_pct_from_leaderboard(self, monkeypatch):
+        """scan() must attach bill_share_pct = top-20 cumulative_pct from leaderboard."""
+        self._make_full_mock(monkeypatch)
+        result = savings.scan(api_key=self.FAKE_KEY, app_key=self.FAKE_APP, site="us1")
+        assert "bill_share_pct" in result, "scan() result missing 'bill_share_pct' key"
+        assert isinstance(result["bill_share_pct"], (int, float))
+        assert 0.0 <= result["bill_share_pct"] <= 100.0
+
+    def test_bill_share_pct_is_zero_when_no_leaderboard(self, monkeypatch):
+        """When pattern_leaderboard is empty, bill_share_pct=0.0."""
+        # Mock with empty events (so no patterns)
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
+
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            if "/api/v1/usage/logs" in url:
+                return (200, {}, json.dumps(USAGE_LOGS_FIXTURE).encode())
+            elif "/api/v1/logs/config/indexes" in url:
+                return (200, {}, json.dumps(LOGS_INDEXES_FIXTURE).encode())
+            else:
+                return (200, {}, json.dumps({}).encode())
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, json.dumps(_empty_events).encode())
+            if "/api/v2/logs/analytics/aggregate" in url:
+                return (200, {}, json.dumps({"data": {"buckets": []}}).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings.scan(api_key="k", app_key="a", site="us1")
+        assert result["bill_share_pct"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# TASK A: _fetch_pattern_timeseries
+# ---------------------------------------------------------------------------
+
+class TestFetchPatternTimeseries:
+    """Tests for _fetch_pattern_timeseries(phrase_query, api_key, app_key, site, days=17)."""
+
+    def test_fetch_pattern_timeseries_posts_to_aggregate_endpoint(self, monkeypatch):
+        """_fetch_pattern_timeseries must POST to /api/v2/logs/analytics/aggregate."""
+        captured = {}
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/analytics/aggregate" in url:
+                captured["url"] = url
+                captured["body"] = json.loads(body_bytes)
+                return (200, {}, json.dumps({"data": {"buckets": []}}).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        phrase = "connection timeout"
+        savings._fetch_pattern_timeseries(phrase, "key", "app", "us1", days=17)
+        assert "/api/v2/logs/analytics/aggregate" in captured.get("url", "")
+
+    def test_fetch_pattern_timeseries_body_has_correct_structure(self, monkeypatch):
+        """Body must have filter.query, timeseries compute, and empty group_by."""
+        captured = {}
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/analytics/aggregate" in url:
+                captured["body"] = json.loads(body_bytes)
+                return (200, {}, json.dumps({"data": {"buckets": []}}).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        phrase = "connection timeout"
+        savings._fetch_pattern_timeseries(phrase, "key", "app", "us1", days=17)
+        body = captured["body"]
+        assert body["filter"]["query"] == phrase
+        assert body["group_by"] == []
+        assert body["compute"][0]["type"] == "timeseries"
+        assert body["compute"][0]["aggregation"] == "count"
+
+    def test_fetch_pattern_timeseries_returns_json(self, monkeypatch):
+        """Must return the parsed JSON response."""
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            return (200, {}, json.dumps({"data": {"buckets": [{"by": {"service": "test"}, "computes": {"c0": [1, 2, 3]}}]}}).encode())
+
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings._fetch_pattern_timeseries("phrase", "key", "app", "us1")
+        assert "data" in result
+        assert "buckets" in result["data"]
+
+
+# ---------------------------------------------------------------------------
+# TASK B: _validate_exclusion_query
+# ---------------------------------------------------------------------------
+
+class TestValidateExclusionQuery:
+    """Tests for _validate_exclusion_query(query, expected_24h_events, api_key, app_key, site)."""
+
+    def test_validate_exclusion_query_returns_dict_with_required_keys(self, monkeypatch):
+        """Must return dict with actual, expected, ratio, confidence."""
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            # Mock response with one bucket containing count
+            return (200, {}, json.dumps({
+                "data": {"buckets": [{"computes": {"c0": 1000}}]}
+            }).encode())
+
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings._validate_exclusion_query("status:200", 2000, "key", "app", "us1")
+        assert "actual" in result
+        assert "expected" in result
+        assert "ratio" in result
+        assert "confidence" in result
+
+    def test_validate_exclusion_query_ratio_high_confidence_when_close(self, monkeypatch):
+        """Confidence should be 'high' when 0.5 <= ratio <= 2.0."""
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            return (200, {}, json.dumps({
+                "data": {"buckets": [{"computes": {"c0": 1500}}]}
+            }).encode())
+
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        # actual=1500, expected=2000, ratio=0.75 (within 0.5-2.0 range)
+        result = savings._validate_exclusion_query("status:200", 2000, "key", "app", "us1")
+        assert result["confidence"] == "high"
+
+    def test_validate_exclusion_query_ratio_low_confidence_when_far(self, monkeypatch):
+        """Confidence should be 'low' when ratio < 0.5 or > 2.0."""
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            return (200, {}, json.dumps({
+                "data": {"buckets": [{"computes": {"c0": 500}}]}
+            }).encode())
+
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        # actual=500, expected=2000, ratio=0.25 (< 0.5)
+        result = savings._validate_exclusion_query("status:200", 2000, "key", "app", "us1")
+        assert result["confidence"] == "low"
+
+    def test_validate_exclusion_query_returns_unknown_on_error(self, monkeypatch):
+        """On DatadogError, must return actual=0, expected=expected, ratio=1.0, confidence='unknown'."""
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            raise dd_client.DatadogError("Network error")
+
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings._validate_exclusion_query("status:200", 2000, "key", "app", "us1")
+        assert result["actual"] == 0
+        assert result["expected"] == 2000
+        assert result["ratio"] == 1.0
+        assert result["confidence"] == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# TASK C: logs_read_data scope probe
+# ---------------------------------------------------------------------------
+
+class TestPreflightScopesLogsReadData:
+    """Tests for logs_read_data scope in preflight_scopes."""
+
+    def test_preflight_adds_logs_read_data_to_result(self, monkeypatch):
+        """preflight_scopes must include 'logs_read_data' in returned dict."""
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            return (200, {}, b'{}')
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, json.dumps({"data": []}).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings.preflight_scopes("key", "app", "us1")
+        assert "logs_read_data" in result
+
+    def test_preflight_logs_read_data_true_on_200(self, monkeypatch):
+        """When /api/v2/logs/events/search returns 200, logs_read_data=True."""
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            return (200, {}, b'{}')
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, json.dumps({"data": []}).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings.preflight_scopes("key", "app", "us1")
+        assert result["logs_read_data"] is True
+
+    def test_preflight_logs_read_data_false_on_403(self, monkeypatch):
+        """When /api/v2/logs/events/search returns 403, logs_read_data=False."""
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            return (200, {}, b'{}')
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                return (403, {}, b'{"errors":["Forbidden"]}')
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings.preflight_scopes("key", "app", "us1")
+        assert result["logs_read_data"] is False
+
+    def test_preflight_logs_read_data_in_missing_when_false(self, monkeypatch):
+        """When logs_read_data=False, it must appear in missing[]."""
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            return (200, {}, b'{}')
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                return (403, {}, b'{}')
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings.preflight_scopes("key", "app", "us1")
+        assert "logs_read_data" in result["missing"]
+
+    def test_preflight_logs_read_data_not_in_missing_when_true(self, monkeypatch):
+        """When logs_read_data=True, it must NOT appear in missing[]."""
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            return (200, {}, b'{}')
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, json.dumps({"data": []}).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings.preflight_scopes("key", "app", "us1")
+        assert "logs_read_data" not in result.get("missing", [])
+
+
+# ---------------------------------------------------------------------------
+# TASK D: scan() pooled, pattern-first model
+# ---------------------------------------------------------------------------
+
+class TestScanPatternFirst:
+    """Tests for scan() POOLED, pattern-first rewire."""
+
+    def _make_full_mock_with_patterns(self, monkeypatch):
+        """Mock all endpoints for pattern-first scan."""
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
+
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            if "/api/v1/usage/logs" in url:
+                return (200, {}, json.dumps(USAGE_LOGS_FIXTURE).encode())
+            elif "/api/v1/logs/config/indexes" in url:
+                return (200, {}, json.dumps(LOGS_INDEXES_FIXTURE).encode())
+            elif "/api/v2/logs/config/metrics" in url:
+                return (200, {}, json.dumps({"data": []}).encode())
+            elif "/api/v2/metrics" in url and "/volumes" in url:
+                metric_name = url.split("/api/v2/metrics/")[1].split("/volumes")[0]
+                if "user.requests" in metric_name:
+                    return (200, {}, json.dumps(METRIC_VOLUMES_HIGH_CARDINALITY).encode())
+                else:
+                    return (200, {}, json.dumps(METRIC_VOLUMES_LOW_CARDINALITY).encode())
+            elif "/api/v2/metrics" in url:
+                return (200, {}, json.dumps(METRICS_LIST_FIXTURE).encode())
+            elif "/api/v2/usage/estimated_cost" in url:
+                return (200, {}, json.dumps(ESTIMATED_COST_FIXTURE).encode())
+            else:
+                return (200, {}, b"{}")
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, json.dumps(_empty_events).encode())
+            if "/api/v2/logs/analytics/aggregate" in url:
+                return (200, {}, json.dumps(LOGS_AGGREGATE_FIXTURE).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+
+    def test_scan_returns_patterns_key(self, monkeypatch):
+        """scan() must return 'patterns' key with list of pattern opportunities."""
+        self._make_full_mock_with_patterns(monkeypatch)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert "patterns" in result
+        assert isinstance(result["patterns"], list)
+
+    def test_scan_returns_pattern_leaderboard_key(self, monkeypatch):
+        """scan() must return 'pattern_leaderboard' key."""
+        self._make_full_mock_with_patterns(monkeypatch)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert "pattern_leaderboard" in result
+        assert isinstance(result["pattern_leaderboard"], list)
+
+    def test_scan_returns_similar_families_key(self, monkeypatch):
+        """scan() must return 'similar_families' key."""
+        self._make_full_mock_with_patterns(monkeypatch)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert "similar_families" in result
+        assert isinstance(result["similar_families"], list)
+
+    def test_scan_returns_surges_key(self, monkeypatch):
+        """scan() must return 'surges' key (anomalies with pattern tagging)."""
+        self._make_full_mock_with_patterns(monkeypatch)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert "surges" in result
+        assert isinstance(result["surges"], list)
+
+    def test_scan_returns_bill_share_pct_key(self, monkeypatch):
+        """scan() must return 'bill_share_pct' key (sum of pattern shares)."""
+        self._make_full_mock_with_patterns(monkeypatch)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert "bill_share_pct" in result
+        assert isinstance(result["bill_share_pct"], (int, float))
+
+    def test_scan_returns_scope_gate_key(self, monkeypatch):
+        """scan() must return 'scope_gate' key (True if logs_read_data missing)."""
+        self._make_full_mock_with_patterns(monkeypatch)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert "scope_gate" in result
+        assert isinstance(result["scope_gate"], bool)
+
+    def test_scan_returns_lines_examined_key(self, monkeypatch):
+        """scan() must return 'lines_examined' key (event count from pooled sample)."""
+        self._make_full_mock_with_patterns(monkeypatch)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert "lines_examined" in result
+        assert isinstance(result["lines_examined"], int)
+
+    def test_scan_returns_sampled_key(self, monkeypatch):
+        """scan() must return 'sampled' key (True if events were fetched)."""
+        self._make_full_mock_with_patterns(monkeypatch)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert "sampled" in result
+        assert isinstance(result["sampled"], bool)
+
+    def test_scan_scope_gate_true_when_logs_read_data_missing(self, monkeypatch):
+        """When logs_read_data scope is missing, scope_gate=True."""
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
+
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            if "/api/v1/usage/logs" in url:
+                return (200, {}, json.dumps(USAGE_LOGS_FIXTURE).encode())
+            elif "/api/v1/logs/config/indexes" in url:
+                return (200, {}, json.dumps(LOGS_INDEXES_FIXTURE).encode())
+            elif "/api/v2/logs/config/metrics" in url:
+                return (200, {}, json.dumps({"data": []}).encode())
+            elif "/api/v2/metrics" in url and "/volumes" in url:
+                return (200, {}, json.dumps(METRIC_VOLUMES_LOW_CARDINALITY).encode())
+            elif "/api/v2/metrics" in url:
+                return (200, {}, json.dumps(METRICS_LIST_FIXTURE).encode())
+            elif "/api/v2/usage/estimated_cost" in url:
+                return (200, {}, json.dumps(ESTIMATED_COST_FIXTURE).encode())
+            else:
+                return (200, {}, b"{}")
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                # Return 403 for logs_read_data probe (check page.limit to distinguish)
+                page = json.loads(body_bytes).get("page", {})
+                if "limit" in page:
+                    return (403, {}, b'{}')
+                return (200, {}, json.dumps(_empty_events).encode())
+            if "/api/v2/logs/analytics/aggregate" in url:
+                return (200, {}, json.dumps(LOGS_AGGREGATE_FIXTURE).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert result["scope_gate"] is True
+
+    def test_scan_patterns_empty_when_scope_gate(self, monkeypatch):
+        """When scope_gate=True, patterns=[] (skipped due to missing scope)."""
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
+
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            if "/api/v1/usage/logs" in url:
+                return (200, {}, json.dumps(USAGE_LOGS_FIXTURE).encode())
+            elif "/api/v1/logs/config/indexes" in url:
+                return (200, {}, json.dumps(LOGS_INDEXES_FIXTURE).encode())
+            elif "/api/v2/logs/config/metrics" in url:
+                return (200, {}, json.dumps({"data": []}).encode())
+            elif "/api/v2/metrics" in url and "/volumes" in url:
+                return (200, {}, json.dumps(METRIC_VOLUMES_LOW_CARDINALITY).encode())
+            elif "/api/v2/metrics" in url:
+                return (200, {}, json.dumps(METRICS_LIST_FIXTURE).encode())
+            elif "/api/v2/usage/estimated_cost" in url:
+                return (200, {}, json.dumps(ESTIMATED_COST_FIXTURE).encode())
+            else:
+                return (200, {}, b"{}")
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                page = json.loads(body_bytes).get("page", {})
+                if "limit" in page:
+                    return (403, {}, b'{}')
+                return (200, {}, json.dumps(_empty_events).encode())
+            if "/api/v2/logs/analytics/aggregate" in url:
+                return (200, {}, json.dumps(LOGS_AGGREGATE_FIXTURE).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+        result = savings.scan(api_key="key", app_key="app", site="us1")
+        assert result["patterns"] == []

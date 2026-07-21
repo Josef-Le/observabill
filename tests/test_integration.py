@@ -241,9 +241,13 @@ class TestScanRoute:
         assert "$3,500" in body
 
     def test_scan_renders_lever_title(self, server):
-        self._patch_savings_scan()
+        # v3 is pattern-first: a real scan renders the mined pattern templates
+        # (leaderboard), not the old service-lever titles.
+        import fixtures
+        self._patch_savings_scan(fixtures.SAMPLE_SCAN)
         _, body = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
-        assert "Archive CDN/LB 2xx access logs to metrics" in body
+        assert "No more objects to analyze" in body        # a mined pattern template
+        assert "of your log bill" in body                  # the leaderboard framing
 
     def test_scan_includes_dashboard_css(self, server):
         self._patch_savings_scan()
@@ -579,18 +583,18 @@ class TestFunnelOrder:
         self.app.append_to_store = lambda *a, **kw: None
 
     def test_metrics_funnel_order_includes_scan(self):
-        token = os.environ.get("ADMIN_TOKEN", "observabill-admin")
+        token = self.app.ADMIN_TOKEN
         result = self.app.page_metrics(token)
         # Must include "scan" in the funnel display (even if 0 count)
         assert "scan" in result
 
     def test_metrics_funnel_order_includes_apply(self):
-        token = os.environ.get("ADMIN_TOKEN", "observabill-admin")
+        token = self.app.ADMIN_TOKEN
         result = self.app.page_metrics(token)
         assert "apply" in result
 
     def test_metrics_funnel_order_scan_before_apply(self):
-        token = os.environ.get("ADMIN_TOKEN", "observabill-admin")
+        token = self.app.ADMIN_TOKEN
         result = self.app.page_metrics(token)
         scan_pos = result.find(">scan<") if ">scan<" in result else result.find("scan")
         apply_pos = result.find(">apply<") if ">apply<" in result else result.find("apply")

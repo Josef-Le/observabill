@@ -775,6 +775,342 @@ pre.detection-query {
     .drilldown-grid { grid-template-columns: 1fr; }
     .stats-bar { grid-template-columns: 1fr 1fr; }
 }
+
+/* ── Findings cards (new content-intelligence UI) ──────────────────────── */
+
+/* Action badge for recommended_action */
+.action-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 0.76rem;
+    font-weight: 800;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.action-exclude       { background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5; }
+.action-sample        { background: #fef3c7; color: #92400e; border: 1px solid #fcd34d; }
+.action-to_metric     { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+.action-trim_fields   { background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
+.action-reduce_cardinality { background: #ede9fe; color: #5b21b6; border: 1px solid #c4b5fd; }
+.action-review        { background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff; }
+.action-keep          { background: #f1f5f9; color: #475569; border: 1px solid #cbd5e1; }
+
+/* Metered pill */
+.metered-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 20px;
+    padding: 2px 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: #78350f;
+    white-space: nowrap;
+    cursor: default;
+}
+
+/* Finding card */
+.finding-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+    margin-bottom: 20px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    transition: box-shadow 0.15s;
+}
+.finding-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.10); }
+
+.finding-card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 20px 22px 14px 22px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.finding-card-title {
+    font-size: 0.97rem;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0 0 6px 0;
+    line-height: 1.35;
+}
+.finding-card-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+.finding-card-savings {
+    text-align: right;
+    flex-shrink: 0;
+}
+
+/* Template code block */
+.template-block {
+    margin: 0 22px 14px 22px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 2px solid #e0e7ff;
+}
+.template-block-header {
+    background: #1e293b;
+    padding: 7px 14px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #7dd3fc;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.template-block-body {
+    background: #0f172a;
+    padding: 12px 16px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.88rem;
+    line-height: 1.6;
+    color: #e2e8f0;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+}
+/* Highlight placeholders like <NUM> <UUID> <IP> <*> <ID> */
+.tpl-placeholder {
+    color: #fbbf24;
+    font-weight: 700;
+    background: rgba(251,191,36,0.12);
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+/* Redacted sample line */
+.sample-line {
+    margin: 0 22px 14px 22px;
+    padding: 9px 14px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-left: 3px solid #94a3b8;
+    border-radius: 0 7px 7px 0;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.78rem;
+    color: #64748b;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.5;
+}
+.sample-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #94a3b8;
+    margin-right: 8px;
+}
+
+/* Query excerpt block */
+.query-block {
+    margin: 0 22px 14px 22px;
+}
+.query-block-header {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--slate);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+}
+.query-code {
+    background: #0f172a;
+    border-radius: 7px;
+    padding: 10px 14px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.80rem;
+    color: #86efac;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+.btn-copy-query {
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 5px;
+    padding: 2px 8px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: #94a3b8;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-top: 1px;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+.btn-copy-query:hover { background: rgba(255,255,255,0.15); color: #e2e8f0; }
+.btn-copy-query.copied { color: #34d399; border-color: #34d399; }
+
+/* Why-safe note */
+.why-safe-note {
+    margin: 0 22px 14px 22px;
+    padding: 9px 14px;
+    background: #f0fdf4;
+    border: 1px solid #bbf7d0;
+    border-left: 3px solid var(--green);
+    border-radius: 0 7px 7px 0;
+    font-size: 0.82rem;
+    color: #166534;
+    line-height: 1.55;
+}
+
+/* Finding card footer */
+.finding-card-footer {
+    padding: 14px 22px;
+    border-top: 1px solid var(--border);
+    background: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+/* Section heading */
+.section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.section-heading h2 { margin: 0; }
+.section-sub {
+    font-size: 0.82rem;
+    color: var(--slate);
+}
+
+/* Anomaly watchdog section */
+.anomaly-section {
+    background: var(--surface);
+    border: 1px solid #fde68a;
+    border-radius: 14px;
+    overflow: hidden;
+    margin-bottom: 28px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+}
+.anomaly-section-header {
+    background: #fffbeb;
+    border-bottom: 1px solid #fde68a;
+    padding: 14px 22px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.anomaly-section-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    color: #78350f;
+}
+.anomaly-section-body {
+    padding: 14px 22px;
+}
+.anomaly-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid #fef3c7;
+    line-height: 1.55;
+    font-size: 0.88rem;
+    color: var(--text);
+}
+.anomaly-row:last-child { border-bottom: none; }
+.anomaly-icon {
+    font-size: 1.2rem;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+.anomaly-text { flex: 1; }
+.anomaly-text strong { color: var(--text); }
+.anomaly-cost {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--amber);
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+.anomaly-empty {
+    padding: 18px 0;
+    font-size: 0.85rem;
+    color: var(--slate);
+    text-align: center;
+}
+
+/* Collapsed cost map */
+.cost-map-details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 28px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+}
+.cost-map-details summary {
+    cursor: pointer;
+    padding: 14px 22px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--slate);
+    background: #f8fafc;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    list-style: none;
+}
+.cost-map-details summary::-webkit-details-marker { display: none; }
+.cost-map-details summary::before {
+    content: '▶';
+    font-size: 0.68rem;
+    color: #94a3b8;
+    transition: transform 0.18s;
+}
+.cost-map-details[open] summary::before { transform: rotate(90deg); }
+.cost-map-details summary:hover { background: #f1f5f9; }
+.cost-map-details-body { padding: 0 0 4px 0; }
+
+/* Sampled-false notice */
+.no-content-notice {
+    background: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    font-size: 0.85rem;
+    color: #78350f;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+.no-content-notice .notice-icon { flex-shrink: 0; font-size: 1.1rem; }
 """
 
 
@@ -807,6 +1143,56 @@ function toggleDrilldown(id) {
                 bar.style.width = bar.dataset.width;
             });
         }, 30);
+    }
+}
+
+// ── Expand / collapse a leaderboard row's detail row ─────────────────────────
+function toggleLbRow(id) {
+    var row = document.getElementById('lbdd-' + id);
+    var caret = document.getElementById('lbcaret-' + id);
+    if (!row) return;
+    var open = row.style.display !== 'none';
+    if (open) {
+        row.style.display = 'none';
+        if (caret) caret.textContent = '▸';
+    } else {
+        row.style.display = 'table-row';
+        if (caret) caret.textContent = '▾';
+    }
+}
+
+// ── Copy query block ──────────────────────────────────────────────────────────
+function copyQueryBlock(id, btn) {
+    var el = document.getElementById(id);
+    if (!el || !btn) return;
+    // Extract text from the span (first child), not the button
+    var span = el.querySelector('span');
+    var text = span ? (span.textContent || span.innerText) : (el.textContent || el.innerText);
+    // Strip trailing button text
+    if (navigator.clipboard) {
+        navigator.clipboard.writeText(text.trim()).then(function() {
+            btn.textContent = '✓ Copied';
+            btn.classList.add('copied');
+            setTimeout(function() {
+                btn.textContent = 'Copy';
+                btn.classList.remove('copied');
+            }, 2000);
+        });
+    } else {
+        var ta = document.createElement('textarea');
+        ta.value = text.trim();
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        btn.textContent = '✓ Copied';
+        btn.classList.add('copied');
+        setTimeout(function() {
+            btn.textContent = 'Copy';
+            btn.classList.remove('copied');
+        }, 2000);
     }
 }
 
@@ -1050,23 +1436,54 @@ def _heatmap_color(ratio: float) -> str:
 
 def render_hero(scan: dict) -> str:
     """
-    Big "Monthly Estimated Waste" card: huge green $ figure, subtitle,
-    inline-SVG sparkline with recent spike highlighted.
+    Big "Monthly Estimated Waste" card: huge green $ figure, subtitle with
+    lines_examined + noisy pattern count, inline-SVG sparkline with spike highlight.
+    When sampled=False, shows a note that content sampling didn't run.
     """
-    total   = float(scan.get("total_monthly_waste_usd", 0))
-    region  = _esc(scan.get("region", "US"))
-    opps    = scan.get("opportunities", [])
-    notes   = scan.get("notes", [])
-    sparkline = scan.get("sparkline", [])
+    total         = float(scan.get("total_monthly_waste_usd", 0))
+    region        = _esc(scan.get("region", "US"))
+    opps          = scan.get("opportunities", [])
+    notes         = scan.get("notes", [])
+    sparkline     = scan.get("sparkline", [])
+    lines_examined = int(scan.get("lines_examined", 0))
+    sampled       = scan.get("sampled", True)
 
-    n_logs    = sum(1 for o in opps if o.get("category") == "logs")
-    n_metrics = sum(1 for o in opps if o.get("category") == "metrics")
-    opp_desc  = []
-    if n_logs:
-        opp_desc.append(f"<strong>{n_logs}</strong> log lever{'s' if n_logs != 1 else ''}")
-    if n_metrics:
-        opp_desc.append(f"<strong>{n_metrics}</strong> metric lever{'s' if n_metrics != 1 else ''}")
-    opp_str = " &amp; ".join(opp_desc) if opp_desc else f"<strong>{len(opps)}</strong> levers"
+    # Count noisy template + field_bloat opportunities (the "content intelligence" finds)
+    noisy_opps = [o for o in opps if o.get("lever") in ("pattern_exclusion", "field_bloat")]
+    n_noisy    = len(noisy_opps)
+
+    # Build hero sub-line
+    if lines_examined and n_noisy:
+        hero_sub = (
+            f"We examined <strong>{lines_examined:,}</strong> of your log lines and found "
+            f"<strong>{n_noisy}</strong> noisy pattern{'s' if n_noisy != 1 else ''} "
+            f"costing <strong style='color:#ecfdf5;'>"
+            + _fmt_usd(total)
+            + "</strong>/mo."
+        )
+    else:
+        n_logs    = sum(1 for o in opps if o.get("category") == "logs")
+        n_metrics = sum(1 for o in opps if o.get("category") == "metrics")
+        opp_desc  = []
+        if n_logs:
+            opp_desc.append(f"<strong>{n_logs}</strong> log lever{'s' if n_logs != 1 else ''}")
+        if n_metrics:
+            opp_desc.append(f"<strong>{n_metrics}</strong> metric lever{'s' if n_metrics != 1 else ''}")
+        opp_str  = " &amp; ".join(opp_desc) if opp_desc else f"<strong>{len(opps)}</strong> levers"
+        hero_sub = opp_str + " identified" if opps else "No opportunities found"
+
+    # Sampled-false notice (missing logs_read_data scope)
+    no_sample_note = ""
+    if not sampled:
+        no_sample_note = (
+            '<div style="margin-top:14px;padding:10px 14px;background:rgba(251,191,36,0.18);'
+            'border:1px solid rgba(251,191,36,0.4);border-radius:8px;'
+            'font-size:0.82rem;color:#fef3c7;">'
+            '<strong>Note:</strong> Content sampling did not run — the <code style="background:rgba(255,255,255,0.12);'
+            'padding:1px 5px;border-radius:3px;">logs_read_data</code> scope was not granted. '
+            'Showing anomaly detection and cost-map analysis only.'
+            '</div>'
+        )
 
     # SVG sparkline
     svg_html = ""
@@ -1083,32 +1500,24 @@ def render_hero(scan: dict) -> str:
             y = h - pad - (v - lo) / rng * (h - pad * 2)
             return x, y
 
-        # polyline points
-        pts = " ".join(f"{px(i, v)[0]:.1f},{px(i, v)[1]:.1f}" for i, v in enumerate(vals))
-
-        # Area fill
+        pts      = " ".join(f"{px(i, v)[0]:.1f},{px(i, v)[1]:.1f}" for i, v in enumerate(vals))
         area_pts = f"{pad},{h} " + pts + f" {pad + (len(vals)-1)*step:.1f},{h}"
-
-        # Highlight highest point (spike)
-        max_i  = vals.index(hi)
+        max_i    = vals.index(hi)
         spike_x, spike_y = px(max_i, hi)
 
-        svg_html = f"""
-<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" style="display:block;">
-  <defs>
-    <linearGradient id="spk-fill" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%"   stop-color="#34d399" stop-opacity="0.35"/>
-      <stop offset="100%" stop-color="#34d399" stop-opacity="0"/>
-    </linearGradient>
-  </defs>
-  <polygon points="{_esc(area_pts)}" fill="url(#spk-fill)"/>
-  <polyline points="{_esc(pts)}"
-            fill="none" stroke="#34d399" stroke-width="2"
-            stroke-linejoin="round" stroke-linecap="round"/>
-  <!-- spike highlight -->
-  <circle cx="{spike_x:.1f}" cy="{spike_y:.1f}" r="5"
-          fill="#fbbf24" stroke="#fff" stroke-width="2"/>
-</svg>"""
+        svg_html = (
+            f'<svg width="{w}" height="{h}" viewBox="0 0 {w} {h}" style="display:block;">'
+            f'<defs><linearGradient id="spk-fill" x1="0" y1="0" x2="0" y2="1">'
+            f'<stop offset="0%"   stop-color="#34d399" stop-opacity="0.35"/>'
+            f'<stop offset="100%" stop-color="#34d399" stop-opacity="0"/>'
+            f'</linearGradient></defs>'
+            f'<polygon points="{_esc(area_pts)}" fill="url(#spk-fill)"/>'
+            f'<polyline points="{_esc(pts)}" fill="none" stroke="#34d399" stroke-width="2"'
+            f' stroke-linejoin="round" stroke-linecap="round"/>'
+            f'<circle cx="{spike_x:.1f}" cy="{spike_y:.1f}" r="5"'
+            f' fill="#fbbf24" stroke="#fff" stroke-width="2"/>'
+            f'</svg>'
+        )
 
     # Notes chips
     notes_html = ""
@@ -1116,39 +1525,36 @@ def render_hero(scan: dict) -> str:
         chips = "".join(f'<span class="hero-note-chip">{_esc(n)}</span>' for n in notes)
         notes_html = f'<div class="hero-notes">{chips}</div>'
 
-    return f"""
-<div class="hero-card">
-  <a class="settings-link" onclick="openSettings(); return false;" href="#" title="Price settings">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-         stroke="currentColor" stroke-width="2" stroke-linecap="round">
-      <circle cx="12" cy="12" r="3"/>
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06
-               a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09
-               A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83
-               l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09
-               A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83
-               l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09
-               a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83
-               l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09
-               a1.65 1.65 0 0 0-1.51 1z"/>
-    </svg>
-    Price settings
-  </a>
+    sparkline_block = (
+        f'<div class="hero-sparkline" title="30-day cost trend · spike = highest point">{svg_html}</div>'
+        if svg_html else ""
+    )
 
-  <div class="hero-eyebrow">Monthly Estimated Waste · {region}</div>
-  <div class="hero-amount"
-       data-usd="{total}"
-       data-price-key="mixed">
-    <span class="currency">$</span>{total:,.0f}
-  </div>
-  <div class="hero-sub">
-    {opp_desc and (opp_str + " identified") or "No opportunities found"}
-  </div>
-
-  {svg_html and f'<div class="hero-sparkline" title="30-day cost trend · spike = highest point">{svg_html}</div>' or ''}
-
-  {notes_html}
-</div>"""
+    return (
+        f'<div class="hero-card">'
+        f'<a class="settings-link" onclick="openSettings(); return false;" href="#" title="Price settings">'
+        f'<svg width="14" height="14" viewBox="0 0 24 24" fill="none"'
+        f' stroke="currentColor" stroke-width="2" stroke-linecap="round">'
+        f'<circle cx="12" cy="12" r="3"/>'
+        f'<path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06'
+        f'a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09'
+        f'A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83'
+        f'l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09'
+        f'A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83'
+        f'l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09'
+        f'a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83'
+        f'l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09'
+        f'a1.65 1.65 0 0 0-1.51 1z"/>'
+        f'</svg>Price settings</a>'
+        f'<div class="hero-eyebrow">Monthly Estimated Waste &middot; {region}</div>'
+        f'<div class="hero-amount" data-usd="{total}" data-price-key="mixed">'
+        f'<span class="currency">$</span>{total:,.0f}</div>'
+        f'<div class="hero-sub">{hero_sub}</div>'
+        f'{sparkline_block}'
+        f'{no_sample_note}'
+        f'{notes_html}'
+        f'</div>'
+    )
 
 
 # ── render_lever_table ─────────────────────────────────────────────────────────
@@ -1235,6 +1641,361 @@ def render_lever_table(scan: dict, write_enabled: bool, apply_token: str = "") -
   </tbody>
 </table>
 </div>"""
+
+
+# ── render_findings_cards ─────────────────────────────────────────────────────
+
+def _highlight_template(tpl: str) -> str:
+    """Highlight placeholders like <NUM>, <UUID>, <IP>, <*>, <ID> in amber."""
+    import re
+    escaped = html.escape(tpl)
+    # Match <WORD> or <*> — already html-escaped so < = &lt; > = &gt;
+    escaped = re.sub(
+        r'&lt;([A-Z0-9*_]+)&gt;',
+        r'<span class="tpl-placeholder">&lt;\1&gt;</span>',
+        escaped
+    )
+    return escaped
+
+
+def _action_badge(action: str) -> str:
+    labels = {
+        "exclude":           ("EXCLUDE",           "action-exclude"),
+        "sample":            ("SAMPLE 10%",        "action-sample"),
+        "to_metric":         ("CONVERT TO METRIC", "action-to_metric"),
+        "trim_fields":       ("TRIM FIELD",        "action-trim_fields"),
+        "reduce_cardinality":("REDUCE CARDINALITY","action-reduce_cardinality"),
+        "review":            ("REVIEW",            "action-review"),
+        "keep":              ("KEEP",               "action-keep"),
+    }
+    label, cls = labels.get(action, (_esc(action).upper(), "action-keep"))
+    return f'<span class="action-badge {cls}">{label}</span>'
+
+
+def _extract_query(opp: dict) -> str:
+    """Extract the exact DD exclusion query from generated_config, or '' if absent."""
+    cfg = opp.get("generated_config", {})
+    payload = cfg.get("payload", {})
+    filters = payload.get("exclusion_filters", [])
+    if filters and isinstance(filters, list):
+        filt = filters[0].get("filter", {})
+        return str(filt.get("query", ""))
+    # field_bloat: render field name + action
+    if opp.get("lever") == "field_bloat":
+        field = opp.get("field_name", "")
+        action = opp.get("recommended_action", "trim_fields")
+        endpoint = cfg.get("endpoint", "")
+        if field:
+            return f"# Pipeline action: {action}\n# Field: {field}\n# Endpoint: {endpoint}"
+    return ""
+
+
+def render_finding_card(opp: dict, idx: int, write_enabled: bool, apply_token: str = "") -> str:
+    """Render a single rich finding card for pattern_exclusion or field_bloat."""
+    oid       = _esc(opp.get("id", f"opp-{idx}"))
+    lever     = opp.get("lever", "")
+    title     = _esc(opp.get("title", "Untitled"))
+    summary   = _esc(opp.get("summary", ""))
+    action    = opp.get("recommended_action", "keep")
+    savings   = float(opp.get("monthly_savings_usd", 0))
+    cost      = float(opp.get("monthly_cost_usd", savings))
+    events    = int(opp.get("monthly_events", 0))
+    conf      = opp.get("confidence", "")
+    effort    = opp.get("effort", "medium")
+    metered   = bool(opp.get("metered", False))
+    why_safe  = _esc(opp.get("why_safe", opp.get("why", "")))
+    template  = opp.get("template", "")
+    sample    = opp.get("sample_redacted", "")
+    needs_write = opp.get("needs_write_scope", False)
+    cat       = opp.get("category", "logs")
+    price_key = "custom_metric_per_month" if cat == "metrics" else "indexed_log_per_million"
+
+    # Template block (pattern_exclusion) or field summary (field_bloat)
+    if lever == "pattern_exclusion" and template:
+        tpl_highlighted = _highlight_template(template)
+        template_html = (
+            f'<div class="template-block">'
+            f'<div class="template-block-header">'
+            f'<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+            f' stroke-width="2.5" stroke-linecap="round"><polyline points="16 18 22 12 16 6"/>'
+            f'<polyline points="8 6 2 12 8 18"/></svg>'
+            f'LOG TEMPLATE (mined from {_esc(str(opp.get("service","")))} logs)'
+            f'</div>'
+            f'<pre class="template-block-body">{tpl_highlighted}</pre>'
+            f'</div>'
+        )
+    elif lever == "field_bloat":
+        field_name  = _esc(opp.get("field_name", ""))
+        kind        = _esc(opp.get("recommended_action", "trim_fields"))
+        cardinality = opp.get("cardinality", "")
+        card_str    = f", {cardinality:,} distinct values" if isinstance(cardinality, int) and cardinality > 1 else ""
+        template_html = (
+            f'<div class="template-block">'
+            f'<div class="template-block-header">'
+            f'<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+            f' stroke-width="2.5" stroke-linecap="round"><rect x="3" y="3" width="18" height="18"'
+            f' rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/>'
+            f'</svg>'
+            f'FIELD: {field_name}{card_str}'
+            f'</div>'
+            f'<pre class="template-block-body">'
+            f'<span class="tpl-placeholder">{field_name}</span>'
+            f'  &rarr;  {kind}'
+            f'</pre>'
+            f'</div>'
+        )
+    else:
+        template_html = ""
+
+    # Redacted sample line
+    sample_html = ""
+    if sample and lever == "pattern_exclusion":
+        sample_html = (
+            f'<div class="sample-line">'
+            f'<span class="sample-label">sample (redacted)</span>'
+            f'{_esc(sample)}'
+            f'</div>'
+        )
+
+    # Exact query / config block
+    query_str  = _extract_query(opp)
+    query_html = ""
+    if query_str:
+        qid = f"qry-{oid}"
+        query_html = (
+            f'<div class="query-block">'
+            f'<div class="query-block-header">'
+            f'<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+            f' stroke-width="2.5" stroke-linecap="round"><circle cx="11" cy="11" r="8"/>'
+            f'<line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>'
+            f'EXACT DATADOG QUERY / CONFIG'
+            f'</div>'
+            f'<pre class="query-code" id="{qid}">'
+            f'<span style="flex:1;white-space:pre-wrap;word-break:break-all;">{_esc(query_str)}</span>'
+            f'<button class="btn-copy-query" onclick="copyQueryBlock(\'{qid}\',this)">Copy</button>'
+            f'</pre>'
+            f'</div>'
+        )
+
+    # Why-safe note
+    why_html = ""
+    if why_safe:
+        why_html = f'<div class="why-safe-note">&#10003; <strong>Safe to apply:</strong> {why_safe}</div>'
+
+    # Metered pill
+    metered_html = ""
+    if metered:
+        metered_html = (
+            '<span class="metered-pill" title="Datadog already meters this pattern — convert, don\'t drop">'
+            '&#9889; metered'
+            '</span>'
+        )
+
+    # Events/mo compact
+    if events >= 1_000_000_000:
+        events_str = f"{events / 1_000_000_000:.1f}B events/mo"
+    elif events >= 1_000_000:
+        events_str = f"{events / 1_000_000:.1f}M events/mo"
+    elif events > 0:
+        events_str = f"{events:,} events/mo"
+    else:
+        events_str = ""
+
+    # Apply button (reuse existing helper)
+    apply_html = _render_apply_button(oid, write_enabled, needs_write, apply_token=apply_token)
+
+    return (
+        f'<div class="finding-card">'
+        f'<div class="finding-card-header">'
+        f'<div style="flex:1;min-width:0;">'
+        f'<div class="finding-card-title">{title}</div>'
+        f'<div class="finding-card-meta">'
+        f'{_action_badge(action)}'
+        f'{metered_html}'
+        f'{_effort_pill(effort)}'
+        f'{_conf_chip(conf)}'
+        f'</div>'
+        f'<div style="font-size:0.80rem;color:#64748b;">{summary}</div>'
+        f'</div>'
+        f'<div class="finding-card-savings">'
+        f'<div class="savings-amt" data-usd="{savings}" data-price-key="{_esc(price_key)}">'
+        f'{_fmt_usd(savings)}</div>'
+        f'<div style="font-size:0.72rem;color:#64748b;margin-top:2px;text-align:right;">savings/mo</div>'
+        f'{f"""<div style="font-size:0.72rem;color:#94a3b8;margin-top:1px;text-align:right;">{_esc(events_str)}</div>""" if events_str else ""}'
+        f'</div>'
+        f'</div>'
+        f'{template_html}'
+        f'{sample_html}'
+        f'{query_html}'
+        f'{why_html}'
+        f'<div class="finding-card-footer">'
+        f'{apply_html.replace(chr(10), " ")}'
+        f'</div>'
+        f'</div>'
+    )
+
+
+def render_findings_cards(scan: dict, write_enabled: bool, apply_token: str = "") -> str:
+    """
+    Primary findings section: rich cards for each pattern_exclusion and field_bloat opportunity.
+    Legacy levers (high_cardinality_metric, index_quota) fall through to render_lever_table.
+    Includes an honesty note (from scan.notes) near the top.
+    """
+    opps = scan.get("opportunities", [])
+    sampled = scan.get("sampled", True)
+    notes   = scan.get("notes", [])
+
+    # Split: rich cards vs legacy table
+    card_opps   = [o for o in opps if o.get("lever") in ("pattern_exclusion", "field_bloat")]
+    legacy_opps = [o for o in opps if o.get("lever") not in ("pattern_exclusion", "field_bloat")]
+
+    if not card_opps and not legacy_opps:
+        if not sampled:
+            return (
+                '<div class="no-content-notice">'
+                '<div class="notice-icon">&#9888;</div>'
+                '<div>Content sampling did not run (missing <code>logs_read_data</code> scope). '
+                'No pattern findings to show. See anomaly watchdog and cost map below.</div>'
+                '</div>'
+            )
+        return '<div class="card" style="text-align:center;color:#64748b;padding:40px;">No savings opportunities found.</div>'
+
+    total_savings = sum(float(o.get("monthly_savings_usd", 0)) for o in card_opps + legacy_opps)
+
+    # Honesty note from notes list
+    notes_html = ""
+    if notes:
+        notes_items = "".join(f"<li>{_esc(n)}</li>" for n in notes)
+        notes_html = (
+            f'<div style="margin-bottom:18px;padding:10px 16px;background:#fffbeb;'
+            f'border:1px solid #fde68a;border-radius:8px;font-size:0.82rem;color:#78350f;">'
+            f'<strong>Methodology:</strong> <ul style="margin:4px 0 0 16px;padding:0;">{notes_items}</ul>'
+            f'</div>'
+        )
+
+    # Not-sampled notice
+    no_sample_html = ""
+    if not sampled and not card_opps:
+        no_sample_html = (
+            '<div class="no-content-notice">'
+            '<div class="notice-icon">&#9888;</div>'
+            '<div>Content sampling did not run (missing <code>logs_read_data</code> scope). '
+            'Showing cost-map and anomaly findings only.</div>'
+            '</div>'
+        )
+
+    cards_html = "".join(render_finding_card(o, i, write_enabled, apply_token) for i, o in enumerate(card_opps))
+
+    # Legacy table (if any)
+    legacy_html = ""
+    if legacy_opps:
+        legacy_scan = dict(scan)
+        legacy_scan["opportunities"] = legacy_opps
+        legacy_html = (
+            f'<div style="margin-top:28px;">'
+            f'<h3 style="margin:0 0 14px 0;font-size:0.95rem;color:#475569;">Additional levers</h3>'
+            f'{render_lever_table(legacy_scan, write_enabled, apply_token=apply_token)}'
+            f'</div>'
+        )
+
+    n_cards = len(card_opps)
+    section_sub = (
+        f'Total recoverable: <strong style="color:#059669;"'
+        f' data-usd="{total_savings}" data-price-key="mixed">{_fmt_usd(total_savings)}</strong>/mo'
+        f' across <strong>{n_cards}</strong> pattern finding{"s" if n_cards != 1 else ""}'
+    )
+
+    return (
+        f'<div class="section-heading">'
+        f'<h2 style="margin:0;">Log Intelligence Findings</h2>'
+        f'<span class="section-sub">{section_sub}</span>'
+        f'</div>'
+        f'{notes_html}'
+        f'{no_sample_html}'
+        f'{cards_html}'
+        f'{legacy_html}'
+    )
+
+
+# ── render_anomaly_watchdog ────────────────────────────────────────────────────
+
+def render_anomaly_watchdog(scan: dict) -> str:
+    """
+    Anomaly Watchdog section: spike + new_pattern anomalies as a clean card list.
+    Shows a subtle empty state if no anomalies.
+    """
+    anomalies = scan.get("anomalies", [])
+
+    rows = []
+    for a in anomalies:
+        kind   = a.get("kind", "")
+        series = _esc(str(a.get("series", "")))
+        onset  = _esc(str(a.get("onset_date", "")))
+        cost   = a.get("monthly_cost_usd")
+
+        cost_html = ""
+        if cost is not None:
+            cost_html = (
+                f'<div class="anomaly-cost">'
+                f'~{_fmt_usd(float(cost))}/mo</div>'
+            )
+
+        if kind == "spike":
+            latest        = int(a.get("latest", 0))
+            baseline_mean = int(a.get("baseline_mean", 0))
+            sigma         = a.get("sigma", 0)
+            sigma_str     = f"{float(sigma):.1f}"
+            icon  = "&#9888;"  # warning triangle
+            text  = (
+                f'<strong>{series}</strong>: volume spiked to '
+                f'<strong>{latest:,}/day</strong> '
+                f'({sigma_str}&sigma; above {baseline_mean:,} baseline) '
+                f'starting <strong>{onset}</strong>'
+            )
+        elif kind == "new_pattern":
+            monthly_events   = int(a.get("monthly_events", 0))
+            recent_daily_avg = int(a.get("recent_daily_avg", 0))
+            icon  = "&#127373;"  # NEW box emoji fallback — use text
+            icon  = "NEW"
+            text  = (
+                f'<strong>{series}</strong>: a new log pattern started '
+                f'<strong>{onset}</strong>, now '
+                f'~<strong>{monthly_events:,}/mo</strong> '
+                f'(&asymp;{recent_daily_avg:,}/day) &mdash; '
+                f'likely a recent deploy.'
+            )
+        else:
+            icon = "&#9432;"
+            text = f'<strong>{series}</strong>: {_esc(str(a))}'
+
+        rows.append(
+            f'<div class="anomaly-row">'
+            f'<div class="anomaly-icon">{icon}</div>'
+            f'<div class="anomaly-text">{text}</div>'
+            f'{cost_html}'
+            f'</div>'
+        )
+
+    if not rows:
+        body_html = '<div class="anomaly-empty">&#10003; No anomalies detected &mdash; ingest patterns look stable.</div>'
+    else:
+        body_html = "".join(rows)
+
+    return (
+        f'<div class="anomaly-section">'
+        f'<div class="anomaly-section-header">'
+        f'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706"'
+        f' stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">'
+        f'<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86'
+        f'a2 2 0 0 0-3.42 0z"/>'
+        f'<line x1="12" y1="9" x2="12" y2="13"/>'
+        f'<line x1="12" y1="17" x2="12.01" y2="17"/>'
+        f'</svg>'
+        f'<h3>Anomaly Watchdog</h3>'
+        f'</div>'
+        f'<div class="anomaly-section-body">{body_html}</div>'
+        f'</div>'
+    )
 
 
 # ── render_drilldown ───────────────────────────────────────────────────────────
@@ -1444,6 +2205,20 @@ def _render_detection_block(opp: dict) -> str:
     {why_html}
   </div>
 </details>"""
+
+
+def _apply_form(opp: dict, apply_token: str) -> str:
+    """
+    Build an apply form for a given opportunity.
+    Returns HTML form with opp_id and apply_token hidden fields, ready to POST to /apply.
+    """
+    oid = _esc(opp.get("id", ""))
+    safe_token = _esc(apply_token)
+    return f"""<form method="POST" action="/apply" style="display:inline;">
+  <input type="hidden" name="opp_id" value="{oid}">
+  <input type="hidden" name="apply_token" value="{safe_token}">
+  <button type="submit" class="btn-apply">Kill it</button>
+</form>"""
 
 
 def _render_apply_button(oid: str, write_enabled: bool, needs_write: bool,
@@ -1849,65 +2624,567 @@ def render_log_cost_map(scan: dict) -> str:
 
 # ── render_dashboard ───────────────────────────────────────────────────────────
 
+def _phrase_from_template(template: str) -> str:
+    """Build a quoted phrase query from a template's leading literal words."""
+    words = []
+    for w in template.split():
+        if w.startswith("<") and w.endswith(">"):
+            continue
+        cw = w.replace('"', "").replace("\\", "")
+        if cw:
+            words.append(cw)
+        if len(words) >= 4:
+            break
+    return '"' + " ".join(words) + '"' if words else ""
+
+
+def _query_for_row(row: dict, opp: "dict | None") -> str:
+    """The exact Datadog query for a leaderboard pattern (from its opp, else a phrase)."""
+    if opp:
+        try:
+            gc = opp.get("generated_config", {}).get("payload", {})
+            q = gc.get("exclusion_filters", [{}])[0].get("filter", {}).get("query")
+            if q:
+                return q
+        except (KeyError, IndexError, TypeError):
+            pass
+    return _phrase_from_template(row.get("template", ""))
+
+
+def _leaderboard_detail(rank, row: dict, opp: "dict | None",
+                        write_enabled: bool, apply_token: str) -> str:
+    """Expanded detail panel for one leaderboard pattern — always actionable."""
+    action = row.get("recommended_action", "keep")
+    cls = row.get("classification", {}) or {}
+    why = cls.get("why_safe") or (opp.get("why_safe") if opp else "") or ""
+    monthly_cost = float(row.get("monthly_cost_usd", 0))
+    monthly_events = int(row.get("monthly_events", 0))
+    services = row.get("services", [])
+
+    # Full services breakdown
+    svc_rows = "".join(
+        f'<li style="margin:2px 0;">{_esc(str(s.get("service","")))} '
+        f'— {float(s.get("share_pct",0)):.0f}% ({int(s.get("count",0)):,} in sample)</li>'
+        for s in services
+    ) or "<li>—</li>"
+
+    # Exact query + copy button
+    query = _query_for_row(row, opp)
+    qid = f"lbq-{rank}"
+    query_block = ""
+    if query:
+        query_block = (
+            '<div style="margin-top:10px;">'
+            '<div style="font-size:0.72rem;font-weight:700;color:#64748b;text-transform:uppercase;'
+            'letter-spacing:0.4px;margin-bottom:4px;">Exact Datadog query</div>'
+            f'<div id="{qid}" style="display:flex;align-items:center;gap:8px;background:#0f172a;'
+            'border-radius:6px;padding:8px 10px;font-family:monospace;font-size:0.8rem;color:#e2e8f0;">'
+            f'<span style="flex:1;word-break:break-all;">{_esc(query)}</span>'
+            f'<button class="btn-copy-query" onclick="copyQueryBlock(\'{qid}\',this)" '
+            'style="background:#334155;color:#fff;border:none;border-radius:4px;padding:3px 10px;'
+            'font-size:0.72rem;cursor:pointer;">Copy</button></div></div>'
+        )
+
+    # Action control: apply form for applyable opps, advisory for review/keep
+    applyable = bool(opp and opp.get("id") and opp.get("needs_write_scope"))
+    if applyable and write_enabled and apply_token:
+        action_ctl = (
+            '<div style="margin-top:12px;">' + _apply_form(opp, apply_token) + '</div>'
+        )
+    elif action == "review":
+        action_ctl = (
+            '<div style="margin-top:12px;padding:10px 12px;background:#faf5ff;border:1px solid #e9d5ff;'
+            'border-radius:6px;font-size:0.82rem;color:#6b21a8;">'
+            '<strong>Advisory — you decide.</strong> This is a high-volume, non-error log. It isn\'t '
+            'auto-excluded (it may be intentional), but it\'s a top cost driver. To cut it, add an '
+            'exclusion or sampling filter for the query above, or convert it to a metric.'
+            '</div>'
+        )
+    elif applyable:  # applyable but read-only session
+        action_ctl = (
+            '<div style="margin-top:12px;font-size:0.82rem;color:#64748b;">'
+            'Re-scan with a write key to apply this exclusion in one click.</div>'
+        )
+    else:  # keep
+        action_ctl = (
+            '<div style="margin-top:12px;padding:10px 12px;background:#f0fdf4;border:1px solid #bbf7d0;'
+            'border-radius:6px;font-size:0.82rem;color:#166534;">'
+            'Kept — this pattern carries error/signal value, so it\'s left indexed.</div>'
+        )
+
+    return (
+        '<div style="padding:14px 4px 4px 4px;">'
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">'
+        '<div>'
+        '<div style="font-size:0.72rem;font-weight:700;color:#64748b;text-transform:uppercase;'
+        'letter-spacing:0.4px;margin-bottom:4px;">Where it fires</div>'
+        f'<ul style="margin:0 0 0 16px;padding:0;font-size:0.82rem;color:#334155;">{svc_rows}</ul>'
+        f'<div style="margin-top:8px;font-size:0.8rem;color:#475569;">{monthly_events:,} events/mo '
+        f'· {_fmt_usd(monthly_cost)}/mo · {_fmt_usd(monthly_cost*12)}/yr</div>'
+        '</div>'
+        '<div>'
+        '<div style="font-size:0.72rem;font-weight:700;color:#64748b;text-transform:uppercase;'
+        'letter-spacing:0.4px;margin-bottom:4px;">Why</div>'
+        f'<div style="font-size:0.82rem;color:#334155;">{_esc(why) or "—"}</div>'
+        '</div>'
+        '</div>'
+        f'{query_block}{action_ctl}'
+        '</div>'
+    )
+
+
+def render_pattern_leaderboard(scan: dict, write_enabled: bool, apply_token: str) -> str:
+    """
+    Pattern leaderboard centerpiece:
+    Rank | Template | Services | $/mo | $/yr | % bill | Action
+    Shows all rows from pattern_leaderboard, sorted by cost.
+
+    When write_enabled and apply_token are True, renders apply forms for applyable opportunities.
+    """
+    leaderboard = scan.get("pattern_leaderboard", [])
+    opps_list = scan.get("opportunities", [])
+
+    # Lookup every opportunity (review + applyable) by template so each row can
+    # expand into an actionable drilldown.
+    opps_by_template = {}
+    for o in opps_list:
+        t = o.get("template")
+        if t and t not in opps_by_template:
+            opps_by_template[t] = o
+
+    if not leaderboard:
+        return '<div style="text-align:center;color:#64748b;padding:40px;">No patterns found.</div>'
+
+    rows_html = ""
+    for rank, row in enumerate(leaderboard, 1):
+        template = row.get("template", "")
+        sample = row.get("sample_redacted", "")
+        services = row.get("services", [])
+        monthly_cost = float(row.get("monthly_cost_usd", 0))
+        monthly_events = int(row.get("monthly_events", 0))
+        share_pct = float(row.get("share_pct", 0))
+        action = row.get("recommended_action", "keep")
+        opp = opps_by_template.get(template)
+
+        tpl_html = _highlight_template(template) if template else _esc(sample)
+
+        # Services chips — service NAME + its share of this pattern; "+N more" for extras.
+        def _svc_chip(s):
+            share = s.get("share_pct")
+            label = _esc(str(s.get("service", "")))
+            if share is not None:
+                label += f' <span style="color:#94a3b8;">{float(share):.0f}%</span>'
+            return (
+                '<span style="display:inline-block;background:#f1f5f9;border-radius:12px;'
+                'padding:2px 8px;font-size:0.7rem;margin:0 4px 4px 0;color:#475569;">' + label + '</span>'
+            )
+        services_html = ""
+        if services:
+            shown = services[:3]
+            services_html = "".join(_svc_chip(s) for s in shown)
+            if len(services) > 3:
+                services_html += (
+                    '<span style="display:inline-block;background:#f1f5f9;border-radius:12px;'
+                    f'padding:2px 8px;font-size:0.7rem;color:#64748b;">+{len(services) - 3} more service'
+                    f'{"s" if len(services) - 3 != 1 else ""}</span>'
+                )
+
+        action_html = _action_badge(action)
+        bar_width = min(share_pct, 100)
+        bar_html = (
+            f'<div class="bar-track" style="width:100%;height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden;">'
+            f'<div class="bar-fill" style="width:{bar_width}%;height:100%;background:linear-gradient(90deg,#059669,#10b981);'
+            f'border-radius:4px;"></div></div>'
+        )
+
+        detail_html = _leaderboard_detail(rank, row, opp, write_enabled, apply_token)
+
+        rows_html += f"""
+<tr style="border-bottom:1px solid #e2e8f0;cursor:pointer;" onclick="toggleLbRow('{rank}')">
+  <td style="padding:12px 14px;text-align:center;font-weight:700;color:#475569;width:40px;">
+    <span id="lbcaret-{rank}" style="color:#94a3b8;">▸</span> {rank}
+  </td>
+  <td style="padding:12px 14px;">
+    <div style="font-family:'SF Mono','Fira Code','Consolas',monospace;font-size:0.82rem;color:#0f172a;">{tpl_html}</div>
+    <div style="font-size:0.72rem;color:#94a3b8;margin-top:3px;">{_esc(sample[:60])}{'…' if len(sample) > 60 else ''}</div>
+  </td>
+  <td style="padding:12px 14px;font-size:0.80rem;color:#475569;">{services_html}</td>
+  <td style="padding:12px 14px;text-align:right;font-weight:600;font-size:0.85rem;color:#0f172a;white-space:nowrap;"
+      data-usd="{monthly_cost}" data-price-key="indexed_log_per_million">{_fmt_usd(monthly_cost)}</td>
+  <td style="padding:12px 14px;text-align:right;font-size:0.75rem;color:#94a3b8;white-space:nowrap;"
+      data-usd="{monthly_cost * 12}" data-price-key="indexed_log_per_million">{_fmt_usd(monthly_cost * 12)}</td>
+  <td style="padding:12px 14px;text-align:center;font-weight:600;font-size:0.82rem;color:#0f172a;width:60px;">
+    {bar_html}<div style="font-size:0.72rem;color:#64748b;margin-top:2px;">{share_pct:.1f}%</div>
+  </td>
+  <td style="padding:12px 14px;text-align:right;white-space:nowrap;">{action_html}</td>
+</tr>
+<tr id="lbdd-{rank}" style="display:none;background:#f8fafc;">
+  <td colspan="7" style="padding:0 14px 16px 14px;">{detail_html}</td>
+</tr>"""
+
+    return f"""
+<div class="lever-table-wrap">
+<table style="width:100%;border-collapse:collapse;">
+  <thead>
+    <tr style="background:#f1f5f9;border-bottom:1px solid #e2e8f0;">
+      <th style="padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;text-align:center;width:40px;">#</th>
+      <th style="padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;text-align:left;">Pattern</th>
+      <th style="padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;text-align:left;">Services</th>
+      <th style="padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;text-align:right;">$/mo</th>
+      <th style="padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;text-align:right;">$/yr</th>
+      <th style="padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;text-align:center;">% Bill</th>
+      <th style="padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;text-align:right;">Action</th>
+    </tr>
+  </thead>
+  <tbody>
+    {rows_html}
+  </tbody>
+</table>
+</div>"""
+
+
+def render_surge_section(scan: dict) -> str:
+    """
+    Surge Detector section: patterns growing or newly appeared.
+    If empty, show a small green "stable" line.
+    """
+    surges = scan.get("surges", [])
+
+    if not surges:
+        return (
+            f'<div style="padding:18px 22px;background:#f0fdf4;border:1px solid #bbf7d0;'
+            f'border-radius:10px;font-size:0.85rem;color:#166534;margin-bottom:28px;">'
+            f'<strong>✓</strong> No surges — ingest is stable.</div>'
+        )
+
+    cards = []
+    for surge in surges:
+        kind = surge.get("kind", "")
+        series = _esc(str(surge.get("series", "")))
+        template = surge.get("template", "")
+        onset_date = _esc(str(surge.get("onset_date", "")))
+        monthly_cost = float(surge.get("monthly_cost_usd", 0))
+
+        # Kind badge + color
+        kind_map = {
+            "spike": ("VOLUME SPIKE", "red"),
+            "level_shift": ("STEP-UP", "orange"),
+            "wow_growth": ("GROWING", "orange"),
+            "new_pattern": ("NEW PATTERN", "amber"),
+        }
+        kind_label, color = kind_map.get(kind, ("SURGE", "slate"))
+
+        color_map = {
+            "red": "#dc2626",
+            "orange": "#ea580c",
+            "amber": "#f59e0b",
+            "slate": "#64748b",
+        }
+        border_color = color_map.get(color, "#64748b")
+
+        # Human line per kind
+        if kind == "spike":
+            latest = int(surge.get("latest", 0))
+            baseline_mean = int(surge.get("baseline_mean", 0))
+            sigma = float(surge.get("sigma", 0))
+            human_line = (
+                f'Spiked to <strong>{latest:,}/day</strong>, '
+                f'{sigma:.1f}σ above baseline of {baseline_mean:,}/day'
+            )
+        elif kind == "level_shift":
+            ratio = float(surge.get("ratio", 1.0))
+            human_line = f'Stepped up <strong>{ratio:.1f}×</strong> vs baseline'
+        elif kind == "wow_growth":
+            growth_pct = float(surge.get("growth_pct", 0))
+            human_line = f'Up <strong>{growth_pct:.1f}%</strong> week-over-week'
+        elif kind == "new_pattern":
+            monthly_events = int(surge.get("monthly_events", 0))
+            human_line = f'Appeared {onset_date}, now ~<strong>{monthly_events:,}/mo</strong>'
+        else:
+            human_line = _esc(str(surge))
+
+        tpl_html = _highlight_template(template) if template else f'<em>{series}</em>'
+
+        card = f"""
+<div style="background:var(--surface);border:1px solid var(--border);border-left:3px solid {border_color};
+border-radius:10px;padding:16px 18px;margin-bottom:12px;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+    <span class="action-badge" style="background:{color_map[color]}22;color:{border_color};border:1px solid {border_color}44;">{kind_label}</span>
+    <span style="font-size:0.78rem;color:#64748b;">started <strong>{onset_date}</strong></span>
+  </div>
+  <div style="font-family:'SF Mono','Fira Code','Consolas',monospace;font-size:0.82rem;
+  color:#0f172a;margin-bottom:8px;word-break:break-all;">{tpl_html}</div>
+  <div style="font-size:0.85rem;color:#475569;line-height:1.5;margin-bottom:8px;">{human_line}</div>
+  <div style="font-size:0.82rem;font-weight:700;color:{border_color};text-align:right;">+{_fmt_usd(monthly_cost)}/mo</div>
+</div>"""
+        cards.append(card)
+
+    return (
+        f'<div style="margin-bottom:28px;">'
+        f'<h2 style="margin:0 0 18px 0;font-size:1.1rem;font-weight:700;color:#0f172a;">Surge Detector — patterns growing or newly appeared</h2>'
+        f'{"".join(cards)}'
+        f'</div>'
+    )
+
+
+def render_similar_families(scan: dict) -> str:
+    """
+    Similar pattern families section.
+    Only render if similar_families non-empty.
+    """
+    families = scan.get("similar_families", [])
+
+    if not families:
+        return ""
+
+    family_cards = []
+    for fam in families:
+        family_terms = fam.get("family_terms", [])
+        members = fam.get("members", [])
+        member_count = fam.get("member_count", 0)
+        combined_cost = float(fam.get("combined_monthly_cost_usd", 0))
+        combined_query = fam.get("combined_query", "")
+
+        # List members
+        member_lines = []
+        for member in members:
+            tpl = member.get("template", "")
+            if tpl:
+                member_lines.append(f'<div style="font-family:\'SF Mono\',\'Fira Code\',\'Consolas\',monospace;font-size:0.78rem;color:#64748b;margin-bottom:6px;">{_highlight_template(tpl)}</div>')
+
+        member_html = "".join(member_lines)
+
+        query_html = ""
+        if combined_query:
+            query_html = f"""
+<div style="margin-top:14px;padding:10px 14px;background:#0f172a;border-radius:7px;font-family:'SF Mono','Fira Code','Consolas',monospace;
+font-size:0.78rem;color:#86efac;overflow-x:auto;word-break:break-all;">{_esc(combined_query)}</div>"""
+
+        family_card = f"""
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 18px;margin-bottom:12px;">
+  <div style="font-size:0.82rem;font-weight:600;color:#0f172a;margin-bottom:10px;">
+    <strong>{member_count}</strong> templates · <span style="color:#059669;font-weight:700;"
+      data-usd="{combined_cost}" data-price-key="indexed_log_per_million">{_fmt_usd(combined_cost)}/mo</span> combined
+  </div>
+  {member_html}
+  {query_html}
+</div>"""
+        family_cards.append(family_card)
+
+    return (
+        f'<div style="margin-bottom:28px;">'
+        f'<h2 style="margin:0 0 18px 0;font-size:1.1rem;font-weight:700;color:#0f172a;">Similar Pattern Families — handle as one</h2>'
+        f'{"".join(family_cards)}'
+        f'</div>'
+    )
+
+
 def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str = "") -> str:
     """
-    Full dashboard body string. Compose with html_page() from app.py.
+    Full dashboard body string. Reframed PATTERN-FIRST.
+
+    NEW layout (v3 pattern-intelligence):
+      1. HERO (rewritten): lead with most-expensive leaderboard row
+      2. SCOPE-GATE BANNER (only if scope_gate True)
+      3. STATS BAR: patterns found, recoverable, bill share, surges caught
+      4. LEADERBOARD CENTERPIECE: all pattern rows sorted by cost
+      5. SURGE SECTION: growing/new patterns
+      6. SIMILAR FAMILIES: grouped pattern families (if any)
+      7. SCOPE CHECKLIST: collapsed <details>
+      8. BY-SERVICE COST MAP: collapsed <details> at bottom
 
     SECURITY: apply_token is the only write-flow credential that reaches this
     renderer. api_key / app_key / write_key must NEVER be passed here.
     """
-    opps = scan.get("opportunities", [])
-
-    # Stats bar
-    n_low    = sum(1 for o in opps if o.get("effort") == "low")
-    n_high   = sum(1 for o in opps if o.get("confidence", "").startswith("high"))
-    total_w  = float(scan.get("total_monthly_waste_usd", 0))
-    n_opps   = len(opps)
-
-    stats_html = f"""
-<div class="stats-bar">
-  <div class="stat-card">
-    <div class="stat-label">Total waste</div>
-    <div class="stat-value stat-value-green">{_fmt_usd(total_w)}<span style="font-size:1rem;font-weight:500;">/mo</span></div>
-    <div class="stat-sub">Estimated recoverable</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">Opportunities</div>
-    <div class="stat-value stat-value-blue">{n_opps}</div>
-    <div class="stat-sub">Ranked by savings</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">Quick wins</div>
-    <div class="stat-value stat-value-green">{n_low}</div>
-    <div class="stat-sub">Low-effort levers</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-label">High confidence</div>
-    <div class="stat-value stat-value-amber">{n_high}</div>
-    <div class="stat-sub">Strong signal</div>
-  </div>
-</div>"""
-
-    # Settings panel — uses new render_settings_panel with price_source awareness
+    # Settings panel (always)
     price_source  = scan.get("price_source", "list")
     settings_html = render_settings_panel(price_source)
 
-    hero_html     = render_hero(scan)
-    scope_html    = render_scope_checklist(scan.get("scope_check", {}))
-    cost_map_html = render_log_cost_map(scan) if scan.get("log_cost_map") else ""
-    table_html    = render_lever_table(scan, write_enabled, apply_token=apply_token)
+    # 1. HERO: find star row (most expensive with actionable recommendation)
+    leaderboard = scan.get("pattern_leaderboard", [])
+    opps_by_template = {o.get("template"): o for o in scan.get("opportunities", [])}
 
-    return f"""
-<style>{DASHBOARD_CSS}</style>
-{DASHBOARD_JS}
-{settings_html}
-<div class="container-wide" style="padding-top:32px;">
-  {hero_html}
-  {scope_html}
-  {stats_html}
-  {cost_map_html}
-  {table_html}
+    star_row = None
+    for row in leaderboard:
+        action = row.get("recommended_action", "keep")
+        if action in ("exclude", "sample", "review"):
+            if star_row is None or float(row.get("monthly_cost_usd", 0)) > float(star_row.get("monthly_cost_usd", 0)):
+                star_row = row
+
+    # Build lookup: template -> opportunity (only for applyable opps)
+    opps_by_template_star = {}
+    for o in scan.get("opportunities", []):
+        if o.get("id") and o.get("needs_write_scope"):
+            opps_by_template_star[o.get("template")] = o
+
+    hero_html = ""
+    if star_row:
+        template = star_row.get("template", "")
+        sample = star_row.get("sample_redacted", "")
+        monthly_cost = float(star_row.get("monthly_cost_usd", 0))
+        monthly_events = int(star_row.get("monthly_events", 0))
+        share_pct = float(star_row.get("share_pct", 0))
+        services = star_row.get("services", [])
+        action = star_row.get("recommended_action", "")
+        classification = star_row.get("classification", {})
+        why_safe = classification.get("why_safe", "")
+
+        # Services line (escape each service name to prevent XSS)
+        service_names = ", ".join(_esc(s["service"]) for s in services)
+
+        # CTA button
+        cta_button = ""
+        opp = opps_by_template_star.get(template)
+        if opp and write_enabled and bool(apply_token):
+            # Render as inline apply form
+            oid = _esc(opp.get("id", ""))
+            safe_token = _esc(apply_token)
+            cta_button = (
+                f'<form method="POST" action="/apply" style="display:inline;">'
+                f'<input type="hidden" name="opp_id" value="{oid}">'
+                f'<input type="hidden" name="apply_token" value="{safe_token}">'
+                f'<button type="submit" '
+                f'style="display:inline-flex;align-items:center;gap:6px;background:#059669;'
+                f'color:#fff;border:none;text-decoration:none;border-radius:7px;padding:9px 20px;'
+                f'font-size:0.88rem;font-weight:700;transition:background 0.15s;cursor:pointer;"'
+                f' onmouseover="this.style.background=\'#047857\'" onmouseout="this.style.background=\'#059669\'">'
+                f'Kill it — Exclude</button>'
+                f'</form>'
+            )
+        elif action in ("exclude", "sample", "review"):
+            action_cls_map = {"exclude": "action-exclude", "sample": "action-sample", "review": "action-review"}
+            action_label_map = {"exclude": "EXCLUDE", "sample": "SAMPLE", "review": "REVIEW"}
+            cta_button = f'<span class="action-badge {action_cls_map.get(action)}">{action_label_map.get(action)}</span>'
+
+        hero_html = f"""
+<div class="hero-card">
+  <a class="settings-link" onclick="openSettings(); return false;" href="#" title="Price settings">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <circle cx="12" cy="12" r="3"/>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+    </svg>Price settings
+  </a>
+  <div class="hero-eyebrow">MOST EXPENSIVE REPEATED PATTERN · ACCOUNT-WIDE</div>
+  <div class="hero-amount" data-usd="{monthly_cost * 12}" data-price-key="indexed_log_per_million">
+    <span class="currency">$</span>{monthly_cost * 12:,.0f}/yr
+  </div>
+  <div style="font-family:'SF Mono','Fira Code','Consolas',monospace;font-size:0.92rem;color:#e2e8f0;margin-bottom:20px;word-break:break-all;">{_highlight_template(template)}</div>
+  <div style="font-size:0.80rem;color:#a7f3d0;margin-bottom:8px;">sample (redacted): <em>{_esc(sample[:80])}</em></div>
+  <div class="hero-sub">{monthly_events:,}/mo across {service_names} · {_fmt_usd(monthly_cost)}/mo · {share_pct:.1f}% of your log bill</div>
+  <div style="color:#a7f3d0;font-size:0.82rem;margin-bottom:20px;line-height:1.55;">{_esc(why_safe)}</div>
+  <div class="hero-notes">
+    {cta_button}
+    <a href="#leaderboard" style="display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:#d1fae5;text-decoration:none;border-radius:7px;padding:9px 16px;font-size:0.88rem;font-weight:600;transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.18)'" onmouseout="this.style.background='rgba(255,255,255,0.1)';">See all {len(leaderboard)} patterns ↓</a>
+  </div>
 </div>"""
+    else:
+        hero_html = f'<div class="hero-card"><div class="hero-eyebrow">PATTERN ANALYSIS</div><div class="hero-amount" style="font-size:2.2rem;">No patterns</div><div class="hero-sub">Your logs are optimized or sampling is disabled.</div></div>'
+
+    # 2. SCOPE-GATE BANNER (only if scope_gate True)
+    scope_gate_html = ""
+    if scan.get("scope_gate", False):
+        scope_gate_html = (
+            f'<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;'
+            f'margin-bottom:28px;font-size:0.85rem;color:#78350f;display:flex;align-items:flex-start;gap:10px;">'
+            f'<span style="flex-shrink:0;font-size:1.1rem;">⚠</span>'
+            f'<div><strong>Add the <code style="background:rgba(0,0,0,0.08);padding:1px 5px;border-radius:3px;">logs_read_data</code> scope</strong> '
+            f'to unlock pattern intelligence — you\'re seeing the by-service cost map only.</div>'
+            f'</div>'
+        )
+
+    # 3. STATS BAR
+    n_patterns = len(leaderboard)
+    total_waste = float(scan.get("total_monthly_waste_usd", 0))
+    bill_share = float(scan.get("bill_share_pct", 0))
+    n_surges = len(scan.get("surges", []))
+
+    stats_html = (
+        f'<div class="stats-bar">'
+        f'<div class="stat-card">'
+        f'<div class="stat-label">Patterns found</div>'
+        f'<div class="stat-value stat-value-blue">{n_patterns}</div>'
+        f'</div>'
+        f'<div class="stat-card">'
+        f'<div class="stat-label">Recoverable</div>'
+        f'<div class="stat-value stat-value-green">{_fmt_usd(total_waste)}/mo</div>'
+        f'<div class="stat-sub">{_fmt_usd(total_waste * 12)}/yr</div>'
+        f'</div>'
+        f'<div class="stat-card">'
+        f'<div class="stat-label">Bill share</div>'
+        f'<div class="stat-value stat-value-purple">{bill_share:.0f}%</div>'
+        f'<div class="stat-sub">top patterns = this much of cost</div>'
+        f'</div>'
+        f'<div class="stat-card">'
+        f'<div class="stat-label">Surges caught</div>'
+        f'<div class="stat-value stat-value-amber">{n_surges}</div>'
+        f'</div>'
+        f'</div>'
+    )
+
+    # 4. LEADERBOARD CENTERPIECE
+    leaderboard_html = ""
+    if leaderboard:
+        leaderboard_heading = (
+            f'<div style="margin-bottom:18px;">'
+            f'<h2 style="margin:0;font-size:1.05rem;font-weight:700;color:#0f172a;">These {len(leaderboard)} lines are {bill_share:.0f}% of your log bill</h2>'
+            f'</div>'
+        )
+        leaderboard_html = leaderboard_heading + render_pattern_leaderboard(scan, write_enabled, apply_token)
+
+    # 5. SURGE SECTION
+    surge_html = render_surge_section(scan)
+
+    # 6. SIMILAR FAMILIES
+    families_html = render_similar_families(scan)
+
+    # 7. SCOPE CHECKLIST (collapsed)
+    scope_check = scan.get("scope_check", {})
+    scope_collapsible_html = ""
+    if scope_check:
+        scope_inner = render_scope_checklist(scope_check)
+        scope_collapsible_html = (
+            f'<details style="background:var(--surface);border:1px solid var(--border);border-radius:12px;'
+            f'overflow:hidden;margin-bottom:28px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">'
+            f'<summary style="cursor:pointer;padding:14px 22px;font-size:0.88rem;font-weight:600;'
+            f'color:#64748b;background:#f8fafc;user-select:none;display:flex;align-items:center;gap:8px;'
+            f'list-style:none;">'
+            f'<span style="display:inline-block;font-size:0.68rem;color:#94a3b8;transition:transform 0.18s;'
+            f'will-change:transform;">▶</span>Scope Checklist</summary>'
+            f'<div style="padding:0;">{scope_inner}</div></details>'
+        )
+
+    # 8. COST MAP (collapsed at bottom)
+    cost_map_html = ""
+    if scan.get("log_cost_map"):
+        cost_map_inner = render_log_cost_map(scan)
+        cost_map_html = (
+            f'<details style="background:var(--surface);border:1px solid var(--border);border-radius:12px;'
+            f'overflow:hidden;margin-bottom:28px;box-shadow:0 1px 4px rgba(0,0,0,0.04);">'
+            f'<summary style="cursor:pointer;padding:14px 22px;font-size:0.88rem;font-weight:600;'
+            f'color:#64748b;background:#f8fafc;user-select:none;display:flex;align-items:center;gap:8px;'
+            f'list-style:none;">'
+            f'<span style="display:inline-block;font-size:0.68rem;color:#94a3b8;transition:transform 0.18s;'
+            f'will-change:transform;">▶</span>By-service cost map (secondary view)</summary>'
+            f'<div style="padding:0;">{cost_map_inner}</div></details>'
+        )
+
+    parts = [
+        f"<style>{DASHBOARD_CSS}</style>",
+        DASHBOARD_JS,
+        settings_html,
+        '<div class="container-wide" style="padding-top:32px;">',
+        hero_html,
+        scope_gate_html,
+        stats_html,
+        '<div id="leaderboard"></div>',
+        leaderboard_html,
+        surge_html,
+        families_html,
+        scope_collapsible_html,
+        cost_map_html,
+        "</div>",
+    ]
+    return "\n".join(parts)
 
 
 # ── demo ───────────────────────────────────────────────────────────────────────
@@ -2089,12 +3366,249 @@ _SAMPLE_SCAN = {
 }
 
 
+# ── render_protection_page ─────────────────────────────────────────────────────
+
+def render_protection_page(policy: dict, audit_lines: list = None) -> str:
+    """
+    Render a full HTML form for configuring ObservaBill's automated protection.
+
+    The page includes:
+    1. Intro copy explaining the 3 dispositions (Recommend, Alert, Auto)
+    2. Master toggles: enabled, dry_run
+    3. Per-finding mode selects (7 kinds grouped into Pattern findings and Surges)
+    4. Thresholds: numeric inputs and confidence dropdown
+    5. Guardrails: max actions/day + action whitelist checkboxes
+    6. Channels: email and slack_webhook text inputs
+    7. Credentials: write-only password inputs for api_key, app_key, write_key, site
+    8. Recent automated actions (audit_lines if provided)
+
+    All values are HTML-escaped to prevent XSS. Credentials are never rendered as values.
+
+    Args:
+        policy: dict with shape { enabled, dry_run, modes{}, thresholds{}, guardrails{}, channels{} }
+        audit_lines: Optional list of masked audit strings to display in recent actions section
+
+    Returns:
+        Inner HTML body string (caller wraps with html_page)
+    """
+    if audit_lines is None:
+        audit_lines = []
+
+    # Extract policy values with defaults
+    enabled = policy.get("enabled", False)
+    dry_run = policy.get("dry_run", True)
+    modes = policy.get("modes", {})
+    thresholds = policy.get("thresholds", {})
+    guardrails = policy.get("guardrails", {})
+    channels = policy.get("channels", {})
+
+    # Group finding kinds
+    pattern_kinds = ["exclude", "sample", "to_metric", "review"]
+    surge_kinds = ["new_pattern", "cost_surge", "volume_surge"]
+
+    # Render mode select HTML
+    def _mode_select(kind: str) -> str:
+        current = modes.get(kind, "recommend")
+        options = "\n".join(
+            f'    <option value="{opt}" {"selected" if opt == current else ""}>{opt.capitalize()}</option>'
+            for opt in ["recommend", "alert", "auto"]
+        )
+        label = kind.replace("_", " ").title()
+        return f"""<div style="margin-bottom:12px;">
+  <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">{_esc(label)}</label>
+  <select name="mode_{_esc(kind)}" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;">
+{options}
+  </select>
+</div>"""
+
+    pattern_selects = "\n".join(_mode_select(k) for k in pattern_kinds)
+    surge_selects = "\n".join(_mode_select(k) for k in surge_kinds)
+
+    # Confidence dropdown
+    current_confidence = thresholds.get("min_confidence_for_auto", "high")
+    confidence_options = "\n".join(
+        f'    <option value="{opt}" {"selected" if opt == current_confidence else ""}>{opt.capitalize()}</option>'
+        for opt in ["high", "medium", "low"]
+    )
+
+    # Guardrails checkboxes
+    auto_only_actions = guardrails.get("auto_only_actions", [])
+    auto_only_checkboxes = ""
+    for action in ["exclude", "sample", "to_metric"]:
+        checked = "checked" if action in auto_only_actions else ""
+        auto_only_checkboxes += f"""  <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+    <input type="checkbox" name="auto_only_{_esc(action)}" {checked} style="width:16px;height:16px;">
+    <span style="font-size:0.84rem;">{_esc(action).replace('_', ' ').title()}</span>
+  </label>
+"""
+
+    # Audit lines section
+    audit_html = ""
+    if audit_lines:
+        audit_list = "\n".join(
+            f"  <li style=\"margin-bottom:8px;font-size:0.82rem;color:#475569;\">{_esc(line)}</li>"
+            for line in audit_lines
+        )
+        audit_html = f"""<div style="margin-top:32px;padding:20px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;">
+  <h3 style="margin:0 0 12px 0;font-size:0.95rem;color:#0f172a;">Recent automated actions</h3>
+  <ul style="margin:0;padding:0 0 0 16px;">
+{audit_list}
+  </ul>
+</div>"""
+    else:
+        audit_html = """<div style="margin-top:32px;padding:20px;background:#fef3c7;border:1px solid #fde68a;border-radius:10px;">
+  <p style="margin:0;font-size:0.82rem;color:#78350f;">No automated actions yet.</p>
+</div>"""
+
+    # Has credentials stored?
+    has_creds = policy.get("_has_creds", False)
+    creds_note = ""
+    if has_creds:
+        creds_note = '<div style="font-size:0.72rem;color:#64748b;margin-top:4px;">✓ Credentials stored (leave blank to keep)</div>'
+
+    body = f"""<div style="max-width:900px;margin:0 auto;padding:40px 24px;">
+  <h1 style="margin:0 0 12px 0;font-size:1.85rem;font-weight:800;color:#0f172a;">Protection Settings</h1>
+  <p style="margin:0 0 28px 0;font-size:0.95rem;color:#475569;line-height:1.6;">
+    Configure how ObservaBill responds to cost anomalies and savings opportunities. Choose from three dispositions per finding type:
+  </p>
+  <div style="padding:16px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;margin-bottom:24px;font-size:0.84rem;color:#166534;line-height:1.6;">
+    <p style="margin:6px 0;"><strong>Recommend</strong> — Show it in the dashboard only, never alert or auto-apply.</p>
+    <p style="margin:6px 0;"><strong>Alert</strong> — Email or Slack you immediately (if it meets cost threshold).</p>
+    <p style="margin:6px 0;"><strong>Auto</strong> — Apply the fix automatically, with guardrails (confidence, daily caps, whitelist).</p>
+  </div>
+
+  <form method="POST" action="/protection" style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:28px;box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+
+    <!-- Master toggles -->
+    <fieldset style="border:none;padding:0;margin:0 0 24px 0;">
+      <legend style="font-size:0.78rem;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:#64748b;margin-bottom:12px;">Master Controls</legend>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <input type="checkbox" name="enabled" {"checked" if enabled else ""} style="width:18px;height:18px;cursor:pointer;">
+        <span style="font-size:0.88rem;font-weight:500;color:#0f172a;">Enable automated protection</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" name="dry_run" {"checked" if dry_run else ""} style="width:18px;height:18px;cursor:pointer;">
+        <span style="font-size:0.88rem;font-weight:500;color:#0f172a;">Dry-run mode</span>
+      </label>
+      <p style="margin:8px 0 0 26px;font-size:0.75rem;color:#64748b;">Simulates auto-fixes without writing to Datadog.</p>
+    </fieldset>
+
+    <!-- Pattern findings modes -->
+    <fieldset style="border:none;padding:0;margin:0 0 24px 0;">
+      <legend style="font-size:0.78rem;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:#64748b;margin-bottom:14px;">Pattern Findings</legend>
+{pattern_selects}
+    </fieldset>
+
+    <!-- Surge findings modes -->
+    <fieldset style="border:none;padding:0;margin:0 0 24px 0;">
+      <legend style="font-size:0.78rem;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:#64748b;margin-bottom:14px;">Surge Detections</legend>
+{surge_selects}
+    </fieldset>
+
+    <!-- Thresholds -->
+    <fieldset style="border:none;padding:0;margin:0 0 24px 0;">
+      <legend style="font-size:0.78rem;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:#64748b;margin-bottom:14px;">Detection Thresholds</legend>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div>
+          <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">Min cost (USD/month)</label>
+          <input type="number" name="min_cost_usd" value="{_esc(str(thresholds.get('min_cost_usd', 100.0)))}" step="10" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;box-sizing:border-box;">
+        </div>
+        <div>
+          <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">Surge ratio</label>
+          <input type="number" name="surge_ratio" value="{_esc(str(thresholds.get('surge_ratio', 1.30)))}" step="0.05" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;box-sizing:border-box;">
+        </div>
+        <div>
+          <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">WoW growth %</label>
+          <input type="number" name="wow_growth_pct" value="{_esc(str(thresholds.get('wow_growth_pct', 15.0)))}" step="1" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;box-sizing:border-box;">
+        </div>
+        <div>
+          <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">New pattern min cost (USD/month)</label>
+          <input type="number" name="new_pattern_min_cost_usd" value="{_esc(str(thresholds.get('new_pattern_min_cost_usd', 100.0)))}" step="10" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;box-sizing:border-box;">
+        </div>
+      </div>
+      <div style="margin-top:14px;">
+        <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">Min confidence for auto</label>
+        <select name="min_confidence_for_auto" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;">
+{confidence_options}
+        </select>
+      </div>
+    </fieldset>
+
+    <!-- Guardrails -->
+    <fieldset style="border:none;padding:0;margin:0 0 24px 0;">
+      <legend style="font-size:0.78rem;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:#64748b;margin-bottom:14px;">Guardrails</legend>
+      <div style="margin-bottom:14px;">
+        <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">Max auto-actions per day</label>
+        <input type="number" name="auto_max_actions_per_day" value="{_esc(str(guardrails.get('auto_max_actions_per_day', 5)))}" step="1" min="1" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;">
+      </div>
+      <div>
+        <p style="margin:0 0 10px 0;font-size:0.82rem;font-weight:600;color:#0f172a;">Only these action types may auto-apply:</p>
+{auto_only_checkboxes}
+        <p style="margin:8px 0 0 0;font-size:0.72rem;color:#64748b;">Restricts auto-remediation to safe, reversible actions.</p>
+      </div>
+    </fieldset>
+
+    <!-- Channels -->
+    <fieldset style="border:none;padding:0;margin:0 0 24px 0;">
+      <legend style="font-size:0.78rem;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:#64748b;margin-bottom:14px;">Notification Channels</legend>
+      <div style="margin-bottom:14px;">
+        <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">Email address</label>
+        <input type="email" name="email" value="{_esc(channels.get('email', ''))}" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;box-sizing:border-box;">
+      </div>
+      <div>
+        <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">Slack webhook URL</label>
+        <input type="url" name="slack_webhook" value="{_esc(channels.get('slack_webhook', ''))}" placeholder="https://hooks.slack.com/services/..." style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;box-sizing:border-box;">
+      </div>
+    </fieldset>
+
+    <!-- Credentials (write-only) -->
+    <fieldset style="border:none;padding:0;margin:0 0 24px 0;">
+      <legend style="font-size:0.78rem;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:#64748b;margin-bottom:14px;">Datadog Credentials (Watchdog)</legend>
+      <p style="margin:0 0 14px 0;font-size:0.82rem;color:#475569;">Used by the watchdog to run protection workflows continuously.</p>
+      <div style="margin-bottom:14px;">
+        <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">API key</label>
+        <input type="password" name="api_key" placeholder="Leave blank to keep existing" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;box-sizing:border-box;">
+        {creds_note}
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">Application key</label>
+        <input type="password" name="app_key" placeholder="Leave blank to keep existing" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;box-sizing:border-box;">
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">Write key</label>
+        <input type="password" name="write_key" placeholder="Leave blank to keep existing" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;box-sizing:border-box;">
+      </div>
+      <div>
+        <label style="display:block;font-size:0.82rem;font-weight:600;margin-bottom:4px;">Site</label>
+        <select name="site" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:6px;font-size:0.88rem;">
+          <option value="us1" {"selected" if channels.get('site', 'us1') == 'us1' else ''}>us1</option>
+          <option value="eu1" {"selected" if channels.get('site', 'us1') == 'eu1' else ''}>eu1</option>
+        </select>
+      </div>
+    </fieldset>
+
+    <!-- Submit -->
+    <div style="margin-top:28px;padding-top:20px;border-top:1px solid #e2e8f0;">
+      <button type="submit" style="background:#059669;color:#ffffff;border:none;border-radius:7px;padding:10px 24px;font-size:0.92rem;font-weight:700;cursor:pointer;transition:background 0.15s;">
+        Save protection settings
+      </button>
+    </div>
+  </form>
+
+{audit_html}
+
+</div>"""
+
+    return body
+
+
 if __name__ == "__main__":
     import sys
 
     # Try to reuse html_page from app.py if importable
     try:
-        sys.path.insert(0, "/Users/jleizerovich/workspace/ai/revenue/prototypes/observabill")
+        import os as _os
+        sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
         from app import html_page, CSS  # noqa: F401
         _have_app = True
     except ImportError:

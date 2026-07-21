@@ -14,6 +14,7 @@ import html
 import os
 import secrets
 import time
+import threading
 from datetime import date, timedelta
 
 # ── dd_client (read-only cost client; write helper added here) ────────────────
@@ -24,9 +25,24 @@ import savings
 import ui
 import fixtures
 
+# ── config, runner, notify (protection policy + watchdog) ──────────────────────
+import config
+import runner
+import notify
+
 # ── configuration ─────────────────────────────────────────────────────────────
 PORT = int(os.environ.get("PORT", 8921))
-ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "observabill-admin")
+
+# ── protection paths (configurable via env) ──────────────────────────────────
+DATA_DIR = os.environ.get("OBSERVABILL_DATA_DIR", os.path.join(os.path.dirname(__file__), "data"))
+POLICY_PATH = os.path.join(DATA_DIR, "policy.json")
+CREDS_PATH = os.path.join(DATA_DIR, "creds.json")
+PROTECT_STATE_PATH = os.path.join(DATA_DIR, "watchdog_state.json")
+WEBHOOK_SECRET = os.environ.get("OBSERVABILL_WEBHOOK_SECRET", "")
+# Admin token for /metrics (funnel analytics). Prefer an env-set value; otherwise
+# generate a random per-process token (printed once at startup) so the well-known
+# default can't expose funnel/referrer data on a public deploy.
+ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN") or secrets.token_urlsafe(24)
 
 # ── ephemeral apply-session store (keys never in HTML) ────────────────────────
 # Maps token -> {api_key, app_key, site, write_key, ts}
@@ -34,9 +50,23 @@ ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN", "observabill-admin")
 _apply_sessions: dict = {}
 _SESSION_TTL = 1800  # 30 minutes
 
+# FIX 5 (HIGH): Concurrent run_cycle protection
+# Prevents scheduler + webhook from running cycles simultaneously (daily-cap bypass + state corruption)
+_protection_lock = threading.Lock()
 
-def _create_apply_session(api_key: str, app_key: str, site: str, write_key: str) -> str:
-    """Store keys server-side, return an opaque token. Cleans up expired entries."""
+# FIX 6 (HIGH): Webhook DoS rate limit
+# Tracks last webhook call timestamp; throttles rapid requests
+_last_webhook_ts = [0.0]  # list for mutability
+
+
+def _create_apply_session(api_key: str, app_key: str, site: str, write_key: str,
+                          opportunities: "list | None" = None) -> str:
+    """Store keys + this scan's opportunities server-side, return an opaque token.
+
+    Opportunities are stashed here (keyed by id → generated_config) so the /apply
+    path can act on REAL scan findings, not just demo fixtures. Content in these
+    opportunities is already masked/redacted by the engine.
+    """
     # Purge stale entries on every write (no background thread)
     now = time.time()
     expired = [t for t, v in _apply_sessions.items() if now - v["ts"] > _SESSION_TTL]
@@ -48,6 +78,7 @@ def _create_apply_session(api_key: str, app_key: str, site: str, write_key: str)
         "app_key": app_key,
         "site": site,
         "write_key": write_key,
+        "opps": {o.get("id"): o for o in (opportunities or []) if o.get("id")},
         "ts": now,
     }
     return token
@@ -62,6 +93,47 @@ def _get_apply_session(token: str) -> "dict | None":
         del _apply_sessions[token]
         return None
     return entry
+
+
+# ── protection: credentials store (keys NEVER rendered) ───────────────────────
+def _save_protection_creds(api_key: str, app_key: str, write_key: str, site: str) -> None:
+    """Save protection credentials to CREDS_PATH with mode 0600.
+
+    Keys are NEVER rendered in HTML or logged anywhere.
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
+    creds_dict = {
+        "api_key": api_key,
+        "app_key": app_key,
+        "write_key": write_key,
+        "site": site,
+    }
+    # Write with mode 0600 (owner read/write only)
+    # Ensure parent dir exists first
+    os.makedirs(os.path.dirname(CREDS_PATH) or ".", exist_ok=True)
+    fd = os.open(CREDS_PATH, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(creds_dict, f)
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def _load_protection_creds() -> "dict | None":
+    """Load protection credentials from CREDS_PATH, or None if missing/invalid."""
+    if not os.path.exists(CREDS_PATH):
+        return None
+    try:
+        with open(CREDS_PATH, "r") as f:
+            creds = json.load(f)
+        # Validate required keys
+        if all(k in creds for k in ["api_key", "app_key", "site"]):
+            return creds
+    except Exception:
+        pass
+    return None
+
 
 # ── CSS theme (clean light-mode — same palette as SupplementAI) ───────────────
 CSS = """
@@ -366,6 +438,23 @@ def fmt_usd(v):
     if v < 0:
         return f"-${abs(v):,.0f}"
     return f"${v:,.0f}"
+
+
+# FIX 7 (MED): Safe numeric parsing helpers
+def _safe_float(v, default):
+    """Parse v as float, return default on ValueError/TypeError."""
+    try:
+        return float(v) if v else default
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_int(v, default):
+    """Parse v as int, return default on ValueError/TypeError."""
+    try:
+        return int(v) if v else default
+    except (ValueError, TypeError):
+        return default
 
 
 # ── helper: persistent store ───────────────────────────────────────────────────
@@ -681,7 +770,10 @@ def page_scan(api_key, app_key, site, write_key=None):
         scan_result = savings.scan(api_key, app_key, site)
         apply_token = ""
         if write_key:
-            apply_token = _create_apply_session(api_key, app_key, site, write_key)
+            apply_token = _create_apply_session(
+                api_key, app_key, site, write_key,
+                opportunities=scan_result.get("opportunities", []),
+            )
         dashboard_html = ui.render_dashboard(
             scan_result, write_enabled=bool(write_key), apply_token=apply_token
         )
@@ -762,8 +854,9 @@ def page_apply(opp_id, apply_token, confirm):
     site = session["site"]
     write_key = session["write_key"]
 
-    # Resolve opportunity server-side from fixtures (never trust client payload)
-    opp = _find_opp_by_id(opp_id)
+    # Resolve opportunity server-side from THIS session's real scan first,
+    # then fall back to demo fixtures (never trust client payload for the config).
+    opp = _find_opp_by_id(opp_id, session=session)
     if opp is None:
         return _error_page(
             "Opportunity Not Found",
@@ -1095,14 +1188,241 @@ def page_breakdown_form():
     return html_page("Bill Breakdown by Product", body)
 
 
+# ── page: GET /protection ──────────────────────────────────────────────────────
+def page_protection_get():
+    """
+    Render the protection settings page.
+
+    Loads current policy, loads (masked) creds presence, and renders the
+    protection configuration form wrapped in html_page.
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
+    policy = config.load_policy(POLICY_PATH)
+    policy["_has_creds"] = _load_protection_creds() is not None
+
+    # Load audit lines (last 20 lines of watchdog_state.json.audit)
+    # FIX 8 (LOW): audit renderer reads 'ts'/'kind' (fallback to 'timestamp'/'finding_kind')
+    audit_lines = []
+    audit_file = PROTECT_STATE_PATH + ".audit"
+    if os.path.exists(audit_file):
+        try:
+            with open(audit_file, "r") as f:
+                for line in f:
+                    try:
+                        record = json.loads(line.strip())
+                        # Convert record to a short human-readable string (masked)
+                        # Read ts (fallback timestamp), kind (fallback finding_kind), action
+                        timestamp = record.get("ts") or record.get("timestamp", "?")
+                        action = record.get("action", "?")
+                        finding_kind = record.get("kind") or record.get("finding_kind", "?")
+                        audit_str = f"{action} {finding_kind} on {timestamp}"
+                        audit_lines.append(audit_str)
+                    except Exception:
+                        pass
+            # Keep only last 20
+            audit_lines = audit_lines[-20:]
+        except Exception:
+            pass
+
+    body = ui.render_protection_page(policy, audit_lines=audit_lines)
+    return html_page("Protection Settings", body, extra_head=f"<style>{ui.DASHBOARD_CSS}</style>")
+
+
+# ── page: POST /protection ─────────────────────────────────────────────────────
+def page_protection_post(form: dict) -> str:
+    """
+    Handle POST /protection: save policy and optionally update credentials.
+
+    Form dict keys:
+      - enabled: presence means enabled=True
+      - dry_run: presence means dry_run=True
+      - mode_exclude, mode_sample, ...: "recommend"|"alert"|"auto"
+      - email, slack_webhook: strings
+      - api_key, app_key, write_key, site: optional creds
+      - threshold_*, guardrail_* keys for config
+
+    Returns: HTML page (same as GET, with implicit "saved" indicator or banner)
+
+    FIX 7 (MED): Safely parse numeric inputs; catch config.save_policy errors
+    """
+    os.makedirs(DATA_DIR, exist_ok=True)
+
+    try:
+        # Build policy from form with safe numeric parsing
+        policy_dict = {
+            "enabled": "enabled" in form,
+            "dry_run": "dry_run" in form,
+            "modes": {
+                "exclude": form.get("mode_exclude", ["recommend"])[0],
+                "sample": form.get("mode_sample", ["recommend"])[0],
+                "to_metric": form.get("mode_to_metric", ["recommend"])[0],
+                "review": form.get("mode_review", ["recommend"])[0],
+                "new_pattern": form.get("mode_new_pattern", ["alert"])[0],
+                "cost_surge": form.get("mode_cost_surge", ["alert"])[0],
+                "volume_surge": form.get("mode_volume_surge", ["alert"])[0],
+            },
+            "thresholds": {
+                "min_cost_usd": _safe_float(form.get("min_cost_usd", ["100.0"])[0], 100.0),
+                "surge_ratio": _safe_float(form.get("surge_ratio", ["1.30"])[0], 1.30),
+                "wow_growth_pct": _safe_float(form.get("wow_growth_pct", ["15.0"])[0], 15.0),
+                "new_pattern_min_cost_usd": _safe_float(form.get("new_pattern_min_cost_usd", ["100.0"])[0], 100.0),
+                "min_confidence_for_auto": form.get("min_confidence_for_auto", ["high"])[0],
+            },
+            "guardrails": {
+                "auto_max_actions_per_day": _safe_int(form.get("auto_max_actions_per_day", ["5"])[0], 5),
+                "auto_only_actions": [a for a in ["exclude", "sample", "to_metric"] if f"auto_only_{a}" in form],
+            },
+            "channels": {
+                "email": form.get("email", [""])[0],
+                "slack_webhook": form.get("slack_webhook", [""])[0],
+            },
+        }
+
+        # Save policy (may raise ValueError on invalid modes)
+        config.save_policy(POLICY_PATH, policy_dict)
+
+        # If api_key + app_key provided, save creds (blank keys = keep existing)
+        api_key = form.get("api_key", [""])[0]
+        app_key = form.get("app_key", [""])[0]
+        if api_key and app_key:
+            write_key = form.get("write_key", [""])[0]
+            site = form.get("site", ["us1"])[0]
+            _save_protection_creds(api_key, app_key, write_key, site)
+
+        # Re-render the page to show success
+        return page_protection_get()
+
+    except ValueError as e:
+        # Invalid settings — return friendly error page
+        error_msg = f"Invalid settings: {str(e)}"
+        return _error_page("Invalid Protection Settings", error_msg)
+    except Exception as e:
+        # Catch any other exception (should not happen with safe parsing)
+        print(f"[protection-error] {type(e).__name__}: {e}")
+        return _error_page("Settings Error", "Could not save settings. Please try again.")
+
+
+# ── page: POST /webhook/datadog ────────────────────────────────────────────────
+def page_webhook_datadog(query_params: dict, body: str) -> "tuple[str, int]":
+    """
+    Handle POST /webhook/datadog: one protection cycle if enabled + creds present.
+
+    Security:
+      - Requires WEBHOOK_SECRET to match query parameter 'secret'
+      - Never renders any credential in response
+      - On error, returns 200 (no-op) to avoid log spam in Datadog
+      - Rate-limited: throttles rapid calls (< 60s apart)
+      - Thread-safe: serialized with _protection_lock to prevent concurrent cycles
+
+    Args:
+        query_params: dict from urllib.parse.parse_qs (keys are lists)
+        body: request body (unused, but included for symmetry)
+
+    Returns:
+        (json_response_string, status_code) tuple
+    """
+    # Extract and validate secret
+    secret = query_params.get("secret", [""])[0]
+    if not WEBHOOK_SECRET or secret != WEBHOOK_SECRET:
+        return ('{"status":"forbidden"}', 403)
+
+    # FIX 6 (HIGH): Rate limit — throttle rapid requests
+    now = time.time()
+    if now - _last_webhook_ts[0] < 60:
+        # Too soon after last call — throttle
+        return ('{"status":"throttled"}', 200)
+    _last_webhook_ts[0] = now
+
+    # Load policy and creds
+    policy = config.load_policy(POLICY_PATH)
+    creds = _load_protection_creds()
+
+    # If disabled or no creds, return early (no-op)
+    if not policy.get("enabled", False) or not creds:
+        return ('{"status":"disabled"}', 200)
+
+    # FIX 5 (HIGH): Thread-safe cycle execution
+    # Serialize with lock to prevent scheduler + webhook racing
+    with _protection_lock:
+        # Run one cycle
+        try:
+            scan_result = savings.scan(creds["api_key"], creds["app_key"], creds["site"])
+            now_iso = time.time()  # Simple epoch for now (runner uses isoformat string)
+            # Format as ISO string
+            from datetime import datetime
+            now_iso = datetime.utcnow().isoformat() + "Z"
+
+            runner.run_cycle(
+                scan_result,
+                policy,
+                creds,
+                PROTECT_STATE_PATH,
+                now_iso,
+                email_fn=None,
+                slack_fn=None,
+                writer_fn=dd_client.write,
+            )
+            return ('{"status":"ok"}', 200)
+        except Exception as exc:
+            # Log internally, never leak to response
+            print(f"[webhook-error] {type(exc).__name__}: {exc}")
+            return ('{"status":"error"}', 200)  # 200 to not trigger retries
+
+
+# ── background scheduler (optional, only if env var set) ──────────────────────
+def start_protection_scheduler():
+    """
+    Start a background daemon thread that runs protection cycles every hour.
+
+    Only started if OBSERVABILL_ENABLE_SCHEDULER=1 env var is set.
+    Never started at import or during normal test runs.
+    Thread-safe: uses _protection_lock to serialize cycles (prevents webhook racing).
+    """
+    def scheduler_loop():
+        """Run cycles every 3600 seconds (1 hour)."""
+        while True:
+            time.sleep(3600)
+            try:
+                policy = config.load_policy(POLICY_PATH)
+                creds = _load_protection_creds()
+                if not policy.get("enabled", False) or not creds:
+                    continue
+
+                # FIX 5 (HIGH): Thread-safe cycle execution with lock
+                with _protection_lock:
+                    scan_result = savings.scan(creds["api_key"], creds["app_key"], creds["site"])
+                    from datetime import datetime
+                    now_iso = datetime.utcnow().isoformat() + "Z"
+                    runner.run_cycle(
+                        scan_result,
+                        policy,
+                        creds,
+                        PROTECT_STATE_PATH,
+                        now_iso,
+                        email_fn=None,
+                        slack_fn=None,
+                        writer_fn=dd_client.write,
+                    )
+            except Exception as exc:
+                print(f"[scheduler-error] {type(exc).__name__}: {exc}")
+
+    t = threading.Thread(target=scheduler_loop, daemon=True)
+    t.start()
+
+
 # ── helper: look up opportunity by id from sample fixtures ────────────────────
-def _find_opp_by_id(opp_id: str) -> "dict | None":
+def _find_opp_by_id(opp_id: str, session: "dict | None" = None) -> "dict | None":
     """
     Look up a SavingsOpportunity dict by id.
-    For the /apply endpoint: checks fixtures.SAMPLE_SCAN first (demo mode).
-    In production you would pass the opportunity dict through the confirm form
-    or re-run the scan; this is the lightweight fallback.
+
+    Real scans: the opportunity (with its generated_config) is stashed in the
+    server-side apply session at scan time — checked first so Apply works on
+    REAL findings. Demo mode: falls back to fixtures.SAMPLE_SCAN.
     """
+    if session:
+        opp = session.get("opps", {}).get(opp_id)
+        if opp is not None:
+            return opp
     for opp in fixtures.SAMPLE_SCAN.get("opportunities", []):
         if opp.get("id") == opp_id:
             return opp
@@ -1169,6 +1489,9 @@ class ObservaBillHandler(http.server.BaseHTTPRequestHandler):
         elif path == "/metrics":
             self.send_html(page_metrics(qs.get("token", [""])[0]))
 
+        elif path == "/protection":
+            self.send_html(page_protection_get())
+
         else:
             self.send_html(
                 '<div style="font-family:sans-serif;padding:40px;background:#f8fafc;color:#0f172a;min-height:100vh;">'
@@ -1217,6 +1540,14 @@ class ObservaBillHandler(http.server.BaseHTTPRequestHandler):
             note = params.get("note", [""])[0]
             self.send_html(handle_reserve(email, note))
 
+        elif path == "/protection":
+            self.send_html(page_protection_post(params))
+
+        elif path == "/webhook/datadog":
+            qs = urllib.parse.parse_qs(parsed.query)
+            response_body, status = page_webhook_datadog(qs, body)
+            self.send_html(response_body, status)
+
         else:
             self.send_html("Not found", 404)
 
@@ -1224,12 +1555,18 @@ class ObservaBillHandler(http.server.BaseHTTPRequestHandler):
 # ── entrypoint ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     server = make_server(PORT)
+
+    # Start background scheduler if enabled
+    if os.environ.get("OBSERVABILL_ENABLE_SCHEDULER") == "1":
+        start_protection_scheduler()
+
     print(f"""
 ╔══════════════════════════════════════════════════╗
 ║            ObservaBill — Dev Server              ║
 ║  http://localhost:{PORT}                           ║
 ║  Click path: / → /analyze → (breakdown)           ║
 ║              → /sample (no keys needed)           ║
+║              → /protection (settings)             ║
 ╚══════════════════════════════════════════════════╝
 """)
     try:

@@ -74,10 +74,12 @@ _MAX_ERROR_RATIO_FOR_L2M = 0.05  # 5% errors → safe to convert
 # HTTP layer — mockable in tests
 # ---------------------------------------------------------------------------
 
-def _http_get(url: str, headers: dict[str, str], timeout: int = 15) -> tuple[int, dict, bytes]:
+def _http_get(url: str, headers: dict[str, str], timeout: int = 20) -> tuple[int, dict, bytes]:
     """HTTP GET with proxy bypass (direct, not through SSM tunnel).
 
-    Returns (status_code, response_headers, body_bytes).
+    Returns (status_code, response_headers, body_bytes). A network/socket timeout
+    is surfaced as a synthetic 504 so callers map it to a typed DatadogError
+    (never an unhandled exception that would crash a scan).
     """
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     req = urllib.request.Request(url, headers=headers, method="GET")
@@ -86,12 +88,15 @@ def _http_get(url: str, headers: dict[str, str], timeout: int = 15) -> tuple[int
             return (resp.status, dict(resp.headers), resp.read())
     except urllib.error.HTTPError as exc:
         return (exc.code, dict(exc.headers), exc.read())
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return (504, {}, b"")
 
 
-def _http_post(url: str, headers: dict[str, str], body: bytes, timeout: int = 15) -> tuple[int, dict, bytes]:
+def _http_post(url: str, headers: dict[str, str], body: bytes, timeout: int = 30) -> tuple[int, dict, bytes]:
     """HTTP POST with proxy bypass.
 
-    Returns (status_code, response_headers, body_bytes).
+    Returns (status_code, response_headers, body_bytes). Socket/URL timeouts →
+    synthetic 504 (mapped to DatadogError by _raise_for_status).
     """
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     req = urllib.request.Request(url, data=body, headers=headers, method="POST")
@@ -100,6 +105,8 @@ def _http_post(url: str, headers: dict[str, str], body: bytes, timeout: int = 15
             return (resp.status, dict(resp.headers), resp.read())
     except urllib.error.HTTPError as exc:
         return (exc.code, dict(exc.headers), exc.read())
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return (504, {}, b"")
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +182,131 @@ def _fetch_logs_aggregate(api_key: str, app_key: str, site: str) -> dict:
         "options": {"timezone": "UTC"},
     }
     return _post("/api/v2/logs/analytics/aggregate", payload, api_key, app_key, site)
+
+
+def _fetch_logs_timeseries(api_key: str, app_key: str, site: str, days: int = 21) -> dict:
+    """POST /api/v2/logs/analytics/aggregate as a per-day timeseries grouped by service.
+
+    Used for volume-anomaly detection (spikes + newly-emerged noisy patterns).
+    Single-facet group_by only (multi-dim group_by 400s on this API).
+    """
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+    payload = {
+        "compute": [{"aggregation": "count", "type": "timeseries", "interval": "1d", "metric": "count"}],
+        "filter": {
+            "from": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "indexes": ["*"],
+        },
+        "group_by": [
+            {"facet": "service", "limit": 20,
+             "sort": {"order": "desc", "type": "measure", "aggregation": "count"}},
+        ],
+        "options": {"timezone": "UTC"},
+    }
+    return _post("/api/v2/logs/analytics/aggregate", payload, api_key, app_key, site)
+
+
+def _fetch_pattern_timeseries(
+    phrase_query: str,
+    api_key: str,
+    app_key: str,
+    site: str,
+    days: int = 17,
+) -> dict:
+    """POST /api/v2/logs/analytics/aggregate with a phrase filter, no grouping.
+
+    Returns per-day timeseries for volume-anomaly detection on a specific pattern.
+    Similar to _fetch_logs_timeseries but filters to a specific phrase query and
+    has empty group_by (account-wide, not per-service).
+    """
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    start = now - timedelta(days=days)
+    payload = {
+        "compute": [{"aggregation": "count", "type": "timeseries", "interval": "1d", "metric": "count"}],
+        "filter": {
+            "from": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "indexes": ["*"],
+            "query": phrase_query,
+        },
+        "group_by": [],
+        "options": {"timezone": "UTC"},
+    }
+    return _post("/api/v2/logs/analytics/aggregate", payload, api_key, app_key, site)
+
+
+def _validate_exclusion_query(
+    query: str,
+    expected_24h_events: int,
+    api_key: str,
+    app_key: str,
+    site: str,
+) -> dict:
+    """Validate an exclusion query by POSTing to aggregate endpoint for 24h count.
+
+    Parameters
+    ----------
+    query : exclusion filter query to validate
+    expected_24h_events : expected count for sanity-check ratio
+    api_key, app_key, site : auth
+
+    Returns
+    -------
+    {
+        "actual": int (observed count over last 24h),
+        "expected": int (input param),
+        "ratio": float (rounded to 2 decimals),
+        "confidence": "high" (0.5 <= ratio <= 2.0) | "low" | "unknown" (on error),
+    }
+    """
+    from datetime import datetime, timezone, timedelta
+    try:
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=1)
+        payload = {
+            "compute": [{"aggregation": "count", "type": "total", "metric": "count"}],
+            "filter": {
+                "from": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "indexes": ["*"],
+                "query": query,
+            },
+            "group_by": [],
+            "options": {"timezone": "UTC"},
+        }
+        resp = _post("/api/v2/logs/analytics/aggregate", payload, api_key, app_key, site)
+        actual = int(resp.get("data", {}).get("buckets", [{}])[0].get("computes", {}).get("c0", 0))
+    except dd_client.DatadogError:
+        # On error, return safe defaults with unknown confidence
+        return {
+            "actual": 0,
+            "expected": expected_24h_events,
+            "ratio": 1.0,
+            "confidence": "unknown",
+        }
+
+    # Compute ratio, guarding divide-by-zero
+    if expected_24h_events <= 0:
+        ratio = 1.0
+    else:
+        ratio = actual / expected_24h_events
+
+    # Determine confidence: high if 0.5 <= ratio <= 2.0, else low
+    if 0.5 <= ratio <= 2.0:
+        confidence = "high"
+    else:
+        confidence = "low"
+
+    return {
+        "actual": actual,
+        "expected": expected_24h_events,
+        "ratio": round(ratio, 2),
+        "confidence": confidence,
+    }
 
 
 def _fetch_usage_logs(api_key: str, app_key: str, site: str) -> dict:
@@ -270,6 +402,7 @@ def preflight_scopes(api_key: str, app_key: str, site: str) -> dict:
         "metrics_read": bool,
         "billing_read": bool,
         "usage_read": bool,
+        "logs_read_data": bool,
         "missing": [scope_name, ...],
         "unlocks": {scope_name: description},
     }
@@ -289,6 +422,16 @@ def preflight_scopes(api_key: str, app_key: str, site: str) -> dict:
         except Exception:
             return False
 
+    def _probe_post(path: str, payload: dict) -> bool:
+        """Return True if POST to endpoint returns 200, False otherwise."""
+        url = f"{base}{path}"
+        try:
+            body = json.dumps(payload).encode()
+            status, _, _ = _http_post(url, headers, body)
+            return status == 200
+        except Exception:
+            return False
+
     logs_read = _probe("/api/v1/logs/config/indexes")
     # NOTE: /api/v2/metrics rejects page[limit]/filter[tags_cardinality] with 400 (not 403),
     # which a naive probe misreads as "scope absent". Probe the plain endpoint: 200 => metrics_read.
@@ -297,6 +440,13 @@ def preflight_scopes(api_key: str, app_key: str, site: str) -> dict:
     billing_ok = _probe("/api/v2/usage/estimated_cost")
     billing_read = billing_ok
     usage_read = billing_ok
+
+    # Probe logs_read_data: POST /api/v2/logs/events/search with minimal payload
+    logs_read_data_payload = {
+        "filter": {"query": "*", "from": "now-15m", "to": "now"},
+        "page": {"limit": 1},
+    }
+    logs_read_data = _probe_post("/api/v2/logs/events/search", logs_read_data_payload)
 
     missing = []
     if not logs_read:
@@ -307,12 +457,15 @@ def preflight_scopes(api_key: str, app_key: str, site: str) -> dict:
         missing.append("billing_read")
     if not usage_read:
         missing.append("usage_read")
+    if not logs_read_data:
+        missing.append("logs_read_data")
 
     return {
         "logs_read": logs_read,
         "metrics_read": metrics_read,
         "billing_read": billing_read,
         "usage_read": usage_read,
+        "logs_read_data": logs_read_data,
         "missing": missing,
         "unlocks": dict(_SCOPE_UNLOCKS),
     }
@@ -433,540 +586,6 @@ def build_log_cost_map(
 def build_log_total_cost(cost_map: list[dict]) -> float:
     """Return sum of all monthly_cost_usd values in a cost map."""
     return round(sum(r["monthly_cost_usd"] for r in cost_map), 2)
-
-
-# ---------------------------------------------------------------------------
-# Whale drill — secondary facet query for top noisy buckets
-# ---------------------------------------------------------------------------
-
-_DRILL_FACETS = [
-    "@http.url_details.path",
-    "@http.method",
-    "host",
-    "source",
-]
-_MAX_WHALE_DRILL = 3   # drill at most top 3 whales
-_MAX_OPPORTUNITIES = 8  # cap on per-bucket opportunities
-
-
-def _fetch_facet_drill(
-    service: str,
-    status: str,
-    facet: str,
-    api_key: str,
-    app_key: str,
-    site: str,
-) -> list[dict]:
-    """POST aggregate grouped by service+facet for the specific (service, status) bucket.
-
-    Returns list of {facet_value, monthly_events} sorted desc, or [] on error/empty.
-    """
-    from datetime import datetime, timezone, timedelta
-    now = datetime.now(timezone.utc)
-    seven_days_ago = now - timedelta(days=7)
-
-    payload = {
-        "compute": [{"aggregation": "count", "type": "total", "metric": "count"}],
-        "filter": {
-            "from": seven_days_ago.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "to": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "indexes": ["*"],
-            "query": f"service:{service} status:{status}",
-        },
-        "group_by": [
-            {
-                "facet": facet,
-                "limit": 10,
-                "sort": {"order": "desc", "type": "measure", "aggregation": "count"},
-            },
-        ],
-        "options": {"timezone": "UTC"},
-    }
-    try:
-        resp = _post("/api/v2/logs/analytics/aggregate", payload, api_key, app_key, site)
-    except dd_client.DatadogError:
-        return []
-
-    buckets = resp.get("data", {}).get("buckets", [])
-    result = []
-    for bucket in buckets:
-        by = bucket.get("by", {})
-        facet_val = str(by.get(facet, ""))
-        if not facet_val:
-            continue
-        count_7d = int(bucket.get("computes", {}).get("c0", 0))
-        monthly = int(_extrapolate_to_monthly(count_7d))
-        result.append({"facet_value": facet_val, "monthly_events": monthly})
-    return result
-
-
-def _drill_whale(
-    service: str,
-    status: str,
-    api_key: str,
-    app_key: str,
-    site: str,
-) -> tuple[str, list[dict]]:
-    """Try each drill facet in order; return (facet_used, patterns) for first non-empty result.
-
-    Returns ("", []) if all facets are empty or error.
-    """
-    for facet in _DRILL_FACETS:
-        patterns = _fetch_facet_drill(service, status, facet, api_key, app_key, site)
-        if patterns:
-            return facet, patterns
-    return "", []
-
-
-# ---------------------------------------------------------------------------
-# Detector 1b — Multi-opportunity exclusion filter candidates
-# ---------------------------------------------------------------------------
-
-def detect_exclusion_candidates_multi(
-    logs_aggregate: dict,
-    logs_indexes: dict,
-    prices: dict[str, float] = DEFAULT_PRICES,
-    api_key: str = "",
-    app_key: str = "",
-    site: str = "us1",
-    whale_drill: bool = False,
-) -> list[dict]:
-    """Emit a SEPARATE SavingsOpportunity for EACH significant noisy bucket.
-
-    Criteria:
-    - status is debug OR 2xx (200, 201, etc.)
-    - monthly_events >= 1,000,000
-    - Cap at 8 opportunities
-    - Sorted by savings desc
-
-    When api_key/app_key/site are provided and whale_drill=True, attaches sub-patterns
-    for the top 1-3 buckets via a secondary facet query.
-
-    Parameters
-    ----------
-    logs_aggregate : response from POST /api/v2/logs/analytics/aggregate
-    logs_indexes   : response from GET /api/v1/logs/config/indexes
-    prices         : pricing dict
-    api_key        : optional — needed for whale drill
-    app_key        : optional — needed for whale drill
-    site           : Datadog site
-    whale_drill    : if True, runs secondary facet queries for top buckets
-
-    Returns
-    -------
-    list of SavingsOpportunity dicts (may be empty)
-    """
-    price_per_million = prices["indexed_log_per_million"]
-    buckets = logs_aggregate.get("data", {}).get("buckets", [])
-
-    # Pick target index
-    indexes = logs_indexes.get("indexes", [])
-    target_index = indexes[0]["name"] if indexes else "main"
-
-    # Build candidates list
-    candidates: list[dict] = []
-    for bucket in buckets:
-        by = bucket.get("by", {})
-        service = str(by.get("service", "unknown"))
-        status = str(by.get("status", ""))
-        count_7d = int(bucket.get("computes", {}).get("c0", 0))
-        monthly = _extrapolate_to_monthly(count_7d)
-
-        if not (_is_noise_status(status) and monthly >= _MIN_MONTHLY_EVENTS_THRESHOLD):
-            continue
-
-        cost = monthly / 1_000_000 * price_per_million
-        candidates.append({
-            "service": service,
-            "status": status,
-            "monthly_events": int(monthly),
-            "monthly_cost_usd": round(cost, 2),
-        })
-
-    if not candidates:
-        return []
-
-    # Sort desc by cost, cap at _MAX_OPPORTUNITIES
-    candidates.sort(key=lambda c: c["monthly_cost_usd"], reverse=True)
-    candidates = candidates[:_MAX_OPPORTUNITIES]
-
-    # Whale drill for top 1-3
-    drill_results: dict[int, tuple[str, list[dict]]] = {}
-    if whale_drill and api_key and app_key:
-        for idx in range(min(_MAX_WHALE_DRILL, len(candidates))):
-            c = candidates[idx]
-            facet, patterns = _drill_whale(c["service"], c["status"], api_key, app_key, site)
-            drill_results[idx] = (facet, patterns)
-
-    # Build one SavingsOpportunity per candidate
-    opportunities: list[dict] = []
-    for idx, cand in enumerate(candidates):
-        service = cand["service"]
-        status = cand["status"]
-        monthly_events = cand["monthly_events"]
-        monthly_cost = cand["monthly_cost_usd"]
-
-        # Evidence: single row for this bucket
-        evidence = [
-            {
-                "label": f"{service} [{status}]",
-                "volume": f"{monthly_events / 1_000_000:.1f}M events/month",
-                "cost_usd": monthly_cost,
-            }
-        ]
-
-        # Primary exclusion query
-        primary_query = f"service:{service} status:{status}"
-
-        # Optional drill sub-patterns
-        drill_facet = ""
-        drill_patterns: list[dict] = []
-        if idx in drill_results:
-            drill_facet, drill_patterns = drill_results[idx]
-
-        # Build a more specific exclusion query when drill found a top pattern
-        more_specific_query = primary_query
-        if drill_patterns and drill_facet:
-            top_val = drill_patterns[0]["facet_value"]
-            more_specific_query = f"{primary_query} {drill_facet}:{top_val}"
-
-        generated_config = {
-            "endpoint": f"/api/v1/logs/config/indexes/{target_index}",
-            "verb": "PUT",
-            "payload": {
-                "exclusion_filters": [
-                    {
-                        "name": f"auto-exclude-{service}-{status}".lower()
-                               .replace(".", "-").replace("@", "").replace("/", "-"),
-                        "filter": {
-                            "query": more_specific_query if drill_patterns else primary_query,
-                            "sample_rate": 1.0,
-                        },
-                        "is_enabled": True,
-                    }
-                ]
-            },
-        }
-
-        detection_query = (
-            f"POST /api/v2/logs/analytics/aggregate "
-            f"group_by service,status "
-            f"(bucket: service:{service} status:{status})"
-        )
-        if drill_facet and drill_patterns:
-            top_pattern = drill_patterns[0]["facet_value"]
-            detection_query += (
-                f"\n+ facet drill on {drill_facet} "
-                f"→ top pattern: {top_pattern}"
-            )
-
-        why = (
-            f"service:{service} status:{status} generates "
-            f"{monthly_events / 1_000_000:.1f}M indexable events/month at "
-            f"${price_per_million:.2f}/million = ${monthly_cost:.2f}/month; "
-            f"safe to exclude because {status} logs carry no actionable signal."
-        )
-        if drill_patterns and drill_facet:
-            top_patterns_str = ", ".join(p["facet_value"] for p in drill_patterns[:3])
-            why += f" Top {drill_facet} patterns: {top_patterns_str}."
-
-        opp: dict = {
-            "id": _make_id("exclusion_filter", f"{service}-{status}"),
-            "lever": "exclusion_filter",
-            "category": "logs",
-            "service": service,
-            "status": status,
-            "monthly_events": monthly_events,
-            "monthly_cost_usd": monthly_cost,
-            "title": f"Exclude high-volume {status} logs for {service}",
-            "summary": (
-                f"{service} [{status}] generates "
-                f"{monthly_events / 1_000_000:.1f}M indexable events/month "
-                f"that can be safely excluded."
-            ),
-            "monthly_savings_usd": monthly_cost,
-            "savings_pct": "100%",
-            "effort": "low",
-            "confidence": "high",
-            "evidence": evidence,
-            "generated_config": generated_config,
-            "needs_write_scope": True,
-            "detection_query": detection_query,
-            "why": why,
-        }
-
-        if drill_facet:
-            opp["drill_facet"] = drill_facet
-        if drill_patterns is not None:
-            opp["drill_patterns"] = drill_patterns
-
-        opportunities.append(opp)
-
-    return opportunities
-
-
-# ---------------------------------------------------------------------------
-# Detector 1 — Exclusion filter candidates
-# ---------------------------------------------------------------------------
-
-def _is_noise_status(status) -> bool:
-    """True for low-value, high-volume log statuses safe to exclude/sample.
-
-    Case-INSENSITIVE (real Datadog `status` facet values are lowercase, e.g.
-    "debug", "200"). Matches HTTP 2xx success codes (access-log noise) and the
-    DEBUG level. Deliberately does NOT match "info"/"warn"/"error" — we never
-    recommend dropping potentially-useful logs by default.
-    """
-    s = str(status).strip().lower()
-    return s == "debug" or s.startswith("2")
-
-
-def detect_exclusion_candidates(
-    logs_aggregate: dict,
-    logs_indexes: dict,
-    prices: dict[str, float] = DEFAULT_PRICES,
-) -> "dict | None":
-    """Detect high-volume 200/DEBUG services that should be excluded from indexing.
-
-    Parameters
-    ----------
-    logs_aggregate : response from POST /api/v2/logs/analytics/aggregate
-    logs_indexes   : response from GET /api/v1/logs/config/indexes
-    prices         : pricing dict (defaults to DEFAULT_PRICES)
-
-    Returns
-    -------
-    SavingsOpportunity dict or None if no candidates meet the threshold.
-    """
-    price_per_million = prices["indexed_log_per_million"]
-    buckets = logs_aggregate.get("data", {}).get("buckets", [])
-
-    # Aggregate monthly event counts per (service, status) pair
-    candidates: list[tuple[str, str, float]] = []  # (service, status, monthly_events)
-    for bucket in buckets:
-        by = bucket.get("by", {})
-        service = by.get("service", "unknown")
-        status = str(by.get("status", ""))
-        count_7d = int(bucket.get("computes", {}).get("c0", 0))
-        monthly = _extrapolate_to_monthly(count_7d)
-
-        # Candidate: high-volume 200 or DEBUG logs
-        if _is_noise_status(status) and monthly >= _MIN_MONTHLY_EVENTS_THRESHOLD:
-            candidates.append((service, status, monthly))
-
-    if not candidates:
-        return None
-
-    # Sort by volume descending, take top
-    candidates.sort(key=lambda x: x[2], reverse=True)
-    top_service, top_status, top_monthly = candidates[0]
-
-    # Total monthly events across all candidates
-    total_monthly_events = sum(c[2] for c in candidates)
-    monthly_savings_usd = total_monthly_events / 1_000_000 * price_per_million
-
-    # Pick a target index (first without exclusion_filters covering this pattern)
-    indexes = logs_indexes.get("indexes", [])
-    target_index = indexes[0]["name"] if indexes else "main"
-
-    # Build evidence list (top cost drivers)
-    evidence = [
-        {
-            "label": f"{svc} [{st}]",
-            "volume": f"{monthly / 1_000_000:.1f}M events/month",
-            "cost_usd": round(monthly / 1_000_000 * price_per_million, 2),
-        }
-        for svc, st, monthly in candidates[:5]
-    ]
-
-    # Candidate exclusion filter queries
-    filter_queries = [
-        f"service:{svc} status:{st}"
-        for svc, st, _ in candidates[:3]
-    ]
-    primary_query = filter_queries[0] if filter_queries else f"status:{top_status}"
-
-    generated_config = {
-        "endpoint": f"/api/v1/logs/config/indexes/{target_index}",
-        "verb": "PUT",
-        "payload": {
-            "exclusion_filters": [
-                {
-                    "name": f"auto-exclude-{top_service}-{top_status}".lower().replace(".", "-"),
-                    "filter": {"query": primary_query, "sample_rate": 1.0},
-                    "is_enabled": True,
-                }
-            ]
-        },
-    }
-
-    # Estimate total indexed cost for savings_pct denominator
-    total_indexed_cost = total_monthly_events / 1_000_000 * price_per_million
-
-    _detection_query = (
-        'POST /api/v2/logs/analytics/aggregate '
-        'group_by service,status query:"status:200 OR status:DEBUG" '
-        f'(top candidate: service:{top_service} status:{top_status})'
-    )
-    _why = (
-        f"{len(candidates)} service/status pair(s) produce "
-        f"{total_monthly_events / 1_000_000:.1f}M indexable events/month at "
-        f"${price_per_million:.2f}/million = ${monthly_savings_usd:.2f}/month; "
-        f"top offender is {top_service} [{top_status}] — safe to exclude because "
-        "200/DEBUG logs carry no actionable signal."
-    )
-
-    return {
-        "id": _make_id("exclusion_filter", f"{top_service}-{top_status}"),
-        "lever": "exclusion_filter",
-        "category": "logs",
-        "title": f"Exclude high-volume {top_status} logs for {top_service}",
-        "summary": (
-            f"Found {len(candidates)} service/status combination(s) generating "
-            f"{total_monthly_events / 1_000_000:.1f}M indexable events/month "
-            f"that can be safely excluded. Top candidate: {top_service} [{top_status}]."
-        ),
-        "monthly_savings_usd": round(monthly_savings_usd, 2),
-        "savings_pct": _savings_pct_str(monthly_savings_usd, total_indexed_cost),
-        "effort": "low",
-        "confidence": "high",
-        "evidence": evidence,
-        "generated_config": generated_config,
-        "needs_write_scope": True,
-        "detection_query": _detection_query,
-        "why": _why,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Detector 2 — Logs-to-metrics conversion
-# ---------------------------------------------------------------------------
-
-def detect_logs_to_metrics(
-    logs_aggregate: dict,
-    logs_indexes: dict,
-    prices: dict[str, float] = DEFAULT_PRICES,
-) -> "dict | None":
-    """Detect high-volume, low-variance 200-only services suitable for log-based metrics.
-
-    A service is safe to convert if:
-    - 200-status events >> non-200 events (error ratio < _MAX_ERROR_RATIO_FOR_L2M)
-    - Monthly volume exceeds threshold (worth the conversion effort)
-    - None of the group_by keys are forbidden (user_id, trace_id, request_id, ip)
-
-    Parameters
-    ----------
-    logs_aggregate : response from POST /api/v2/logs/analytics/aggregate
-    logs_indexes   : response from GET /api/v1/logs/config/indexes
-    prices         : pricing dict
-
-    Returns
-    -------
-    SavingsOpportunity dict or None.
-    """
-    price_per_million = prices["indexed_log_per_million"]
-    metric_cost = prices["custom_metric_per_month"]
-
-    buckets = logs_aggregate.get("data", {}).get("buckets", [])
-
-    # Build per-service volume breakdown: {service: {status: count_7d}}
-    service_volumes: dict[str, dict[str, float]] = {}
-    for bucket in buckets:
-        by = bucket.get("by", {})
-        service = by.get("service", "unknown")
-        status = str(by.get("status", ""))
-        count_7d = int(bucket.get("computes", {}).get("c0", 0))
-        service_volumes.setdefault(service, {})[status] = (
-            service_volumes.get(service, {}).get(status, 0) + count_7d
-        )
-
-    # Find candidates: high-volume, nearly all 200
-    l2m_candidates: list[tuple[str, float]] = []  # (service, monthly_200_events)
-    for service, status_counts in service_volumes.items():
-        total_7d = sum(status_counts.values())
-        count_200_7d = sum(c for st, c in status_counts.items() if str(st).strip().startswith("2"))
-        if total_7d == 0:
-            continue
-        error_ratio = (total_7d - count_200_7d) / total_7d
-        monthly_200 = _extrapolate_to_monthly(count_200_7d)
-        if error_ratio < _MAX_ERROR_RATIO_FOR_L2M and monthly_200 >= _MIN_MONTHLY_EVENTS_THRESHOLD:
-            l2m_candidates.append((service, monthly_200))
-
-    if not l2m_candidates:
-        return None
-
-    # Take the highest-volume candidate
-    l2m_candidates.sort(key=lambda x: x[1], reverse=True)
-    top_service, top_monthly = l2m_candidates[0]
-
-    # Savings = indexed_cost - metric_cost
-    indexed_cost = top_monthly / 1_000_000 * price_per_million
-    # Replacing with a log-based metric costs ~metric_cost/month (fixed)
-    net_savings = max(0.0, indexed_cost - metric_cost)
-
-    if net_savings <= 0:
-        return None
-
-    # Safe group_by keys (no forbidden tags)
-    safe_group_by = ["service", "env", "status_code"]
-
-    generated_config = {
-        "endpoint": "/api/v1/logs-metrics",
-        "verb": "POST",
-        "payload": {
-            "data": {
-                "id": f"logs.{top_service.replace('-', '_').replace('.', '_')}.request_count",
-                "type": "logs_metrics",
-                "attributes": {
-                    "compute": {"aggregation_type": "count"},
-                    "filter": {"query": f"service:{top_service} status:200", "indexes": ["*"]},
-                    "group_by": [{"path": tag, "tag_name": tag} for tag in safe_group_by],
-                },
-            }
-        },
-    }
-
-    evidence = [
-        {
-            "label": f"{svc} [200 only]",
-            "volume": f"{monthly / 1_000_000:.1f}M events/month",
-            "cost_usd": round(monthly / 1_000_000 * price_per_million, 2),
-        }
-        for svc, monthly in l2m_candidates[:5]
-    ]
-
-    _detection_query = (
-        f'POST /api/v2/logs/analytics/aggregate '
-        f'group_by service,status query:"service:{top_service} status:200" '
-        f'(error_ratio<{_MAX_ERROR_RATIO_FOR_L2M*100:.0f}%, monthly>{_MIN_MONTHLY_EVENTS_THRESHOLD/1e6:.0f}M)'
-    )
-    _why = (
-        f"{top_service} has {top_monthly / 1_000_000:.1f}M 200-status events/month "
-        f"with <{_MAX_ERROR_RATIO_FOR_L2M * 100:.0f}% errors; "
-        f"indexed cost ${indexed_cost:.2f}/month vs log-based metric ~${metric_cost:.2f}/month "
-        f"= ${net_savings:.2f}/month net savings by converting to a count metric."
-    )
-
-    return {
-        "id": _make_id("logs_to_metrics", top_service),
-        "lever": "logs_to_metrics",
-        "category": "logs",
-        "title": f"Convert {top_service} 200-logs to log-based metric",
-        "summary": (
-            f"{top_service} generates {top_monthly / 1_000_000:.1f}M indexed events/month "
-            f"with <{_MAX_ERROR_RATIO_FOR_L2M * 100:.0f}% errors. "
-            f"A log-based metric captures the same signal at ~${metric_cost:.2f}/month."
-        ),
-        "monthly_savings_usd": round(net_savings, 2),
-        "savings_pct": _savings_pct_str(net_savings, indexed_cost),
-        "effort": "medium",
-        "confidence": "medium",
-        "evidence": evidence,
-        "generated_config": generated_config,
-        "needs_write_scope": True,
-        "detection_query": _detection_query,
-        "why": _why,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -1327,13 +946,16 @@ def scan(
     except dd_client.DatadogError as exc:
         notes.append(f"Logs indexes fetch failed: {type(exc).__name__}")
 
-    # --- Fetch metrics data ---
+    # --- Fetch metrics data (bounded; log-content intelligence is the primary lever) ---
     import time as _time
     metrics_volumes: dict[str, dict] = {}
+    _metrics_deadline = _time.time() + 20   # hard cap: don't let the metrics loop dominate the scan
     try:
         metrics_list = _fetch_metrics_list(api_key, app_key, site)
         metric_names = [m["id"] for m in metrics_list.get("data", []) if "id" in m]
-        for i, metric_name in enumerate(metric_names[:60]):  # cap at 60 metrics
+        for i, metric_name in enumerate(metric_names[:30]):  # cap at 30 metrics
+            if _time.time() > _metrics_deadline:
+                break
             try:
                 metrics_volumes[metric_name] = _fetch_metric_volumes(metric_name, api_key, app_key, site)
             except dd_client.RateLimitError:
@@ -1345,39 +967,159 @@ def scan(
                     pass
             except dd_client.DatadogError:
                 pass
-            # Small courtesy sleep every 10 requests to respect rate limits
-            if i > 0 and i % 10 == 0:
-                _time.sleep(0.5)
     except dd_client.DatadogError as exc:
         notes.append(f"Metrics list fetch failed: {type(exc).__name__}")
 
-    # --- Build log cost map (ALL buckets, for UI display) ---
+    # --- Build log cost map (ALL buckets — demoted to context, not the product) ---
     log_cost_map: list[dict] = build_log_cost_map(logs_aggregate, effective_prices)
     log_total_monthly_cost_usd: float = build_log_total_cost(log_cost_map)
 
-    # --- Run detectors ---
-    opportunities: list[dict] = []
+    # === v3 CORE: POOLED, PATTERN-FIRST log intelligence ===================================
+    import logs_intel
+    from datetime import datetime, timezone, timedelta
+    import time as _time
 
-    # Detector 1: multi-opportunity exclusion filter (one per noisy bucket) with whale drill
-    multi_excl = detect_exclusion_candidates_multi(
-        logs_aggregate=logs_aggregate,
-        logs_indexes=logs_indexes,
-        prices=effective_prices,
-        api_key=api_key,
-        app_key=app_key,
-        site=site,
-        whale_drill=True,
-    )
-    opportunities.extend(multi_excl)
+    pattern_opps: list[dict] = []
+    pattern_leaderboard: list[dict] = []
+    similar_families: list[dict] = []
+    surges: list[dict] = []
+    field_bloat: list[dict] = []
+    lines_examined = 0
+    sampled = False
+    bill_share_pct = 0.0
 
-    opp = detect_logs_to_metrics(logs_aggregate, logs_indexes, prices=effective_prices)
-    if opp is not None:
-        opportunities.append(opp)
+    price_per_million = effective_prices["indexed_log_per_million"]
+    indexes = logs_indexes.get("indexes", [])
+    target_index = indexes[0]["name"] if indexes else "main"
 
+    # The team's own log-based metric catalog — patterns they already care about.
+    metric_catalog: list[str] = []
+    try:
+        metric_catalog = logs_intel.fetch_metric_catalog(api_key, app_key, site)
+    except Exception as exc:
+        notes.append(f"Metric catalog fetch failed: {type(exc).__name__}")
+
+    # Compute account-wide monthly events for leaderboard ranking
+    account_monthly_events = sum(r["monthly_events"] for r in log_cost_map)
+    total_bill_cost = log_total_monthly_cost_usd
+
+    # Gate on logs_read_data scope
+    scope_gate = not scope_check.get("logs_read_data", False)
+
+    # POOLED SAMPLING: single sample across entire account (unless scope_gate)
+    if not scope_gate and log_cost_map:
+        now = datetime.now(timezone.utc)
+        frm = (now - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        to = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            events = logs_intel.sample_logs(
+                query="*", frm=frm, to=to,
+                api_key=api_key, app_key=app_key, site=site, cap=8000,
+            )
+            lines_examined = len(events)
+            sampled = lines_examined > 0
+
+            if sampled:
+                # Orchestrate: mine patterns, classify, rank opportunities
+                res = logs_intel.analyze_patterns(
+                    events,
+                    sample_size=lines_examined,
+                    account_monthly_events=account_monthly_events,
+                    price_per_million=price_per_million,
+                    total_bill_cost=total_bill_cost,
+                    metric_catalog=metric_catalog,
+                    target_index=target_index,
+                )
+                pattern_opps = res.get("opportunities", [])
+                pattern_leaderboard = res.get("leaderboard", [])
+                similar_families = res.get("families", [])
+                field_bloat = logs_intel.detect_field_bloat(events, price_per_million=price_per_million)
+
+                # TASK C: Compute bill_share_pct from leaderboard top-20 cumulative_pct
+                # This reflects REAL leaderboard coverage, not just noise opps
+                if pattern_leaderboard:
+                    # Get the cumulative_pct from the last row (highest cumulative) in top 20
+                    bill_share_pct = round(pattern_leaderboard[:20][-1].get("cumulative_pct", 0.0), 1)
+                else:
+                    bill_share_pct = 0.0
+        except dd_client.DatadogError as exc:
+            notes.append(f"Content sampling failed: {type(exc).__name__} "
+                         "(needs logs_read_data scope on the API key)")
+    else:
+        # Scope gate active or no log_cost_map — skip pattern analysis
+        pattern_opps = []
+        pattern_leaderboard = []
+        similar_families = []
+        field_bloat = []
+        bill_share_pct = 0.0
+
+    # SURGES: combine per-service anomalies + per-pattern surges
+    # (a) Per-service timeseries anomalies
+    per_service_anomalies: list[dict] = []
+    try:
+        ts_days = 21
+        ts_resp = _fetch_logs_timeseries(api_key, app_key, site, days=ts_days)
+        series = logs_intel.parse_timeseries(ts_resp)
+        base = datetime.now(timezone.utc) - timedelta(days=ts_days - 1)
+        dates = [(base + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(ts_days)]
+        per_service_anomalies = logs_intel.detect_volume_anomalies(
+            series, dates=dates, price_per_million=price_per_million,
+        )
+    except dd_client.DatadogError as exc:
+        notes.append(f"Anomaly timeseries fetch failed: {type(exc).__name__}")
+
+    # (b) Per-pattern surges: top 8 leaderboard noise patterns
+    per_pattern_surges: list[dict] = []
+    _pattern_surge_deadline = _time.time() + 15  # 15s budget for pattern surge fetches
+    for row in pattern_leaderboard[:8]:
+        if _time.time() > _pattern_surge_deadline:
+            break
+        if not row.get("classification", {}).get("is_noise", False):
+            continue
+        try:
+            # Build phrase query from template's literal words
+            template = row.get("template", "")
+            words = [w for w in template.split() if not (w.startswith("<") and w.endswith(">"))]
+            phrase = " ".join(words[:4])
+            if not phrase:
+                continue
+            phrase_query = f'"{phrase}"'
+
+            ts_resp = _fetch_pattern_timeseries(phrase_query, api_key, app_key, site, days=17)
+            series = logs_intel.parse_timeseries(ts_resp)
+            if not series:
+                continue
+            base = datetime.now(timezone.utc) - timedelta(days=16)
+            dates = [(base + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(17)]
+            anomalies = logs_intel.detect_volume_anomalies(
+                series, dates=dates, price_per_million=price_per_million,
+            )
+            # Tag with template
+            for anom in anomalies:
+                anom["template"] = row.get("template", "")[:60]
+                per_pattern_surges.append(anom)
+        except Exception:
+            # Wrap per-pattern call; no crash on individual failure
+            continue
+
+    # Merge and rank surges
+    surges = per_service_anomalies + per_pattern_surges
+    surges.sort(key=lambda a: a.get("severity", 0), reverse=True)
+    surges = surges[:12]  # cap at 12
+
+    # Build opportunities list: patterns + field-bloat + high-cardinality + index-quota
+    opportunities: list[dict] = list(pattern_opps)
+
+    # Add field-bloat opportunities
+    for fb in field_bloat[:5]:
+        opportunities.append(_field_bloat_to_opportunity(fb, target_index))
+
+    # Detector 3: high-cardinality metric waste
     opp = detect_high_cardinality_metrics(metrics_volumes, prices=effective_prices)
     if opp is not None:
         opportunities.append(opp)
 
+    # Detector 4: index daily-quota / overage prevention
     opp = detect_index_quota(usage_logs, logs_indexes, prices=effective_prices)
     if opp is not None:
         opportunities.append(opp)
@@ -1413,6 +1155,74 @@ def scan(
         "price_source": price_source,
         "log_cost_map": log_cost_map,
         "log_total_monthly_cost_usd": log_total_monthly_cost_usd,
+        # v3 pattern-first surfaces:
+        "patterns": pattern_opps,
+        "pattern_leaderboard": pattern_leaderboard,
+        "similar_families": similar_families,
+        "surges": surges,
+        "bill_share_pct": bill_share_pct,
+        "scope_gate": scope_gate,
+        "lines_examined": lines_examined,
+        "sampled": sampled,
+        # Back-compat alias for anomalies
+        "anomalies": surges,
+        # Legacy field-bloat surface
+        "field_bloat": field_bloat,
+    }
+
+
+def _field_bloat_to_opportunity(fb: dict, target_index: str) -> dict:
+    """Wrap a field-bloat finding as a ScanResult SavingsOpportunity.
+
+    Field bloat reduces ingested GB (not indexed events), so the $ figure is a
+    conservative context estimate; the actionable output is the pipeline remap.
+    """
+    field = fb["field_name"]
+    kind = fb["kind"]
+    rec = fb["recommendation"]
+    est = round(fb.get("impact", 0) / 50.0, 2)  # heuristic monthly $ proxy for ranking
+    verb = "Trim" if kind == "large_field" else "Reduce cardinality of"
+    return {
+        "id": _make_id("field_bloat", field),
+        "lever": "field_bloat",
+        "category": "logs",
+        "service": "",
+        "title": f"{verb} bloated field `{field}`",
+        "summary": fb["why_safe"],
+        "monthly_savings_usd": est,
+        "monthly_cost_usd": est,
+        "savings_pct": "ingest-reduction",
+        "effort": "medium",
+        "confidence": "medium",
+        "evidence": [{
+            "label": field,
+            "volume": (f"{int(fb['avg_bytes'])} bytes avg · {fb['frequency']*100:.0f}% of events"
+                       if kind == "large_field"
+                       else f"{fb['cardinality']} distinct values ({fb['cardinality_ratio']*100:.0f}% unique)"),
+            "cost_usd": est,
+        }],
+        "generated_config": {
+            "endpoint": "/api/v1/logs/config/pipelines",
+            "verb": "POST",
+            "payload": {
+                "name": f"observabill-trim-{field}".replace(".", "-")[:80],
+                "filter": {"query": "*"},
+                "processors": [{
+                    "type": "attribute-remapper" if kind == "high_cardinality" else "string-builder-processor",
+                    "sources": [field],
+                    "is_enabled": True,
+                    "note": ("hash or drop this attribute to cut cardinality"
+                             if kind == "high_cardinality" else "remove/shorten this large attribute"),
+                }],
+            },
+        },
+        "needs_write_scope": True,
+        "detection_query": f"sampled events → field `{field}` flagged as {kind}",
+        "why": fb["why_safe"],
+        "why_safe": fb["why_safe"],
+        "recommended_action": rec,
+        "field_name": field,
+        "cardinality": fb.get("cardinality", 0),
     }
 
 

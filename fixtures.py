@@ -35,329 +35,775 @@ All data structures follow explicit SavingsOpportunity and ScanResult contracts.
 # SAMPLE SCAN RESULT (6 opportunities, ~$3,500/mo total waste)
 # ============================================================================
 
-SAMPLE_SCAN = {
-    "total_monthly_waste_usd": 3500.0,
-    "currency": "USD",
-    "region": "us-east-1",
-    "price_source": "derived",
-    "scope_check": {
-        "logs_read":    True,
-        "metrics_read": True,
-        "billing_read": True,
-        "usage_read":   True,
-        "missing": [],
-        "unlocks": {},
-    },
-    "opportunities": [
-        # 1. logs_to_metrics: CDN/LB 2xx access logs -> count metric (~$1,850/mo)
-        {
-            "id": "opp-001-cdn-access-logs",
-            "lever": "logs_to_metrics",
-            "category": "logs",
-            "title": "Archive CDN/LB 2xx access logs to metrics",
-            "summary": "HTTP 200 access logs from CDN and load balancers are high-volume, low-value. Convert to a count metric tracking request volume by service, method, endpoint.",
-            "monthly_savings_usd": 1850.0,
-            "savings_pct": "59.7%",
-            "effort": "low",
-            "confidence": "high",
-            "evidence": [
-                {
-                    "label": "cdn-prod (HTTPS GETs)",
-                    "volume": "18.5M events/day",
-                    "cost_usd": 945.0,
-                },
-                {
-                    "label": "load-balancer-us (ALB access)",
-                    "volume": "8.2M events/day",
-                    "cost_usd": 420.0,
-                },
-                {
-                    "label": "api-gateway-prod (pass-through 2xx)",
-                    "volume": "5.1M events/day",
-                    "cost_usd": 260.0,
-                },
-                {
-                    "label": "cdn-edge-cache (cache-hit logs)",
-                    "volume": "3.8M events/day",
-                    "cost_usd": 225.0,
-                },
-            ],
-            "generated_config": {
-                "endpoint": "/api/v1/logs-metrics",
-                "verb": "POST",
-                "payload": {
-                    "name": "http.requests.2xx_total",
-                    "filter": {
-                        "query": "source:(cdn-prod OR load-balancer-us OR api-gateway-prod OR cdn-edge-cache) status:200"
-                    },
-                    "group_by": ["service", "method", "http.url_details.path"],
-                },
-            },
-            "needs_write_scope": True,
-            "detection_query": "POST /api/v2/logs/analytics/aggregate\n{\"compute\": [{\"aggregation\": \"count\", \"type\": \"total\"}], \"filter\": {\"from\": \"now-30d\", \"query\": \"source:(cdn-prod OR load-balancer-us OR api-gateway-prod OR cdn-edge-cache) status:200\"}, \"group_by\": [{\"facet\": \"service\", \"limit\": 10}]}",
-            "why": "HTTP 200 responses from CDN and load-balancers carry no actionable signal — they confirm success, which is already tracked by error-rate monitors. These 4 sources collectively account for 35.6M events/day at $945+$420+$260+$225 = $1,850/mo. Converting them to a count metric preserves trend visibility at <$5/mo.",
-        },
-        # 2. high_cardinality_metric: ingested >> indexed (Metrics-without-Limits waste, ~$780/mo)
-        {
-            "id": "opp-002-user-id-cardinality",
-            "lever": "high_cardinality_metric",
-            "category": "metrics",
-            "title": "Reduce ingested cardinality on payment.transaction.latency via Metrics-without-Limits",
-            "summary": "payment.transaction.latency ingests 15,600,000 timeseries but indexes only 312,000 (2.0%). Metrics-without-Limits eliminates the 15,288,000 unused timeseries.",
-            "monthly_savings_usd": 780.0,
-            "savings_pct": "98%",
-            "effort": "medium",
-            "confidence": "high",
-            "evidence": [
-                {
-                    "label": "payment.transaction.latency",
-                    "volume": "15,600,000 ingested / 312,000 queried",
-                    "cost_usd": 764.4,
-                },
-                {
-                    "label": "payment.request.count",
-                    "volume": "3,100,000 ingested / 62,000 queried",
-                    "cost_usd": 15.6,
-                },
-            ],
-            "generated_config": {
-                "endpoint": "/api/v2/metrics/payment.transaction.latency/tags",
-                "verb": "POST",
-                "payload": {
-                    "data": {
-                        "type": "manage_tags",
-                        "id": "payment.transaction.latency",
-                        "attributes": {
-                            "tags": [],
-                            "metric_type": "gauge",
-                        },
-                    }
-                },
-            },
-            "needs_write_scope": True,
-            "detection_query": "GET /api/v2/metrics/{name}/volumes  -> flag ingested_volume>>indexed_volume (top: payment.transaction.latency: 15,600,000 ingested / 312,000 queried)",
-            "why": "2 metric(s) ingest cardinality they never index/query. Top offender: payment.transaction.latency ingests 15,600,000 timeseries but only indexes 312,000 (2.0%) — 15,288,000 ingested-but-never-indexed timeseries at $0.0500/timeseries = $764.40/month wasted. Metrics-without-Limits lets you configure which tag combinations to keep, eliminating the ingested-but-never-indexed cost.",
-        },
-        # 3. exclusion_filter: health-check + kube-probe logs (~$420/mo)
-        {
-            "id": "opp-003-healthcheck-logs",
-            "lever": "exclusion_filter",
-            "category": "logs",
-            "title": "Exclude health-check and kubelet-probe logs",
-            "summary": "Kubernetes liveness/readiness probes and application health checks generate repetitive, low-value logs at high volume. Exclude from indexed logs.",
-            "monthly_savings_usd": 420.0,
-            "savings_pct": "13.5%",
-            "effort": "low",
-            "confidence": "high",
-            "evidence": [
-                {
-                    "label": "/health endpoint GET requests",
-                    "volume": "12.3M events/day",
-                    "cost_usd": 245.0,
-                },
-                {
-                    "label": "kubelet probe logs (readiness/liveness)",
-                    "volume": "4.8M events/day",
-                    "cost_usd": 175.0,
-                },
-            ],
-            "generated_config": {
-                "endpoint": "/api/v1/logs/config/indexes/main",
-                "verb": "PUT",
-                "payload": {
-                    "name": "main",
-                    "exclusion_filters": [
-                        {
-                            "name": "exclude-health-checks",
-                            "filter": "http.method:GET (path:/health OR path:/healthz OR path:/ready)",
-                        },
-                        {
-                            "name": "exclude-kubelet-probes",
-                            "filter": "source:kubelet (probe:readiness OR probe:liveness)",
-                        },
-                    ],
-                },
-            },
-            "needs_write_scope": True,
-            "detection_query": "POST /api/v2/logs/analytics/aggregate\n{\"compute\": [{\"aggregation\": \"count\", \"type\": \"total\"}], \"filter\": {\"from\": \"now-30d\", \"query\": \"http.method:GET (path:/health OR path:/healthz OR path:/ready)\"}, \"group_by\": [{\"facet\": \"path\", \"limit\": 5}]}",
-            "why": "Kubernetes liveness and readiness probes fire every 10–30 seconds per pod. With hundreds of pods in production, this generates 12.3M+ health-check GET requests per day in the log index. These logs are structurally identical (always 200 OK for healthy pods) and carry zero diagnostic value — alerting on failed health checks is better handled via Kubernetes events, not log-based monitors.",
-        },
-        # 4. exclusion_filter: DEBUG logs left on in production (~$260/mo)
-        {
-            "id": "opp-004-debug-logs",
-            "lever": "exclusion_filter",
-            "category": "logs",
-            "title": "Disable DEBUG level logs in production",
-            "summary": "DEBUG-level logs from worker and scheduler services are enabled in production and represent noise. Recommend disabling in prod, keeping only in staging.",
-            "monthly_savings_usd": 260.0,
-            "savings_pct": "8.4%",
-            "effort": "low",
-            "confidence": "medium",
-            "evidence": [
-                {
-                    "label": "worker-service DEBUG logs",
-                    "volume": "6.7M events/day",
-                    "cost_usd": 155.0,
-                },
-                {
-                    "label": "scheduler DEBUG logs",
-                    "volume": "2.9M events/day",
-                    "cost_usd": 105.0,
-                },
-            ],
-            "generated_config": {
-                "endpoint": "/api/v1/logs/config/indexes/main",
-                "verb": "PUT",
-                "payload": {
-                    "name": "main",
-                    "exclusion_filters": [
-                        {
-                            "name": "exclude-debug-worker-prod",
-                            "filter": "source:worker-service level:DEBUG env:production",
-                        },
-                        {
-                            "name": "exclude-debug-scheduler-prod",
-                            "filter": "source:scheduler level:DEBUG env:production",
-                        },
-                    ],
-                },
-            },
-            "needs_write_scope": True,
-        },
-        # 5. logs_to_metrics: payment-service debug events (~$190/mo)
-        {
-            "id": "opp-005-payment-debug-metrics",
-            "lever": "logs_to_metrics",
-            "category": "logs",
-            "title": "Convert payment-service debug events to gauge metric",
-            "summary": "payment-service emits debug-level events for transaction initiation and completion. These can be tracked as a gauge metric instead of storing raw logs.",
-            "monthly_savings_usd": 190.0,
-            "savings_pct": "6.1%",
-            "effort": "low",
-            "confidence": "medium",
-            "evidence": [
-                {
-                    "label": "payment.transaction.initiated (debug)",
-                    "volume": "2.3M events/day",
-                    "cost_usd": 110.0,
-                },
-                {
-                    "label": "payment.transaction.completed (debug)",
-                    "volume": "1.8M events/day",
-                    "cost_usd": 80.0,
-                },
-            ],
-            "generated_config": {
-                "endpoint": "/api/v1/logs-metrics",
-                "verb": "POST",
-                "payload": {
-                    "name": "payment.transaction.gauge",
-                    "filter": {
-                        "query": "source:payment-service (event:transaction.initiated OR event:transaction.completed) level:DEBUG"
-                    },
-                    "group_by": ["event", "status"],
-                },
-            },
-            "needs_write_scope": True,
-        },
-        # 6. index_quota: overage prevention (flagging spike, $0 direct savings)
-        {
-            "id": "opp-006-index-quota-spike",
-            "lever": "index_quota",
-            "category": "logs",
-            "title": "Monitor and cap index quota spike",
-            "summary": "Main index is approaching retention quota (88% full). A spike in events/day is trending upward. Recommend daily monitoring and soft quota alert at 75%.",
-            "monthly_savings_usd": 0.0,
-            "savings_pct": "0%",
-            "effort": "low",
-            "confidence": "high",
-            "evidence": [
-                {
-                    "label": "Main index current size",
-                    "volume": "88% of 500GB quota",
-                    "cost_usd": 0.0,
-                },
-                {
-                    "label": "7-day trend (daily events/GB ingested)",
-                    "volume": "+8% week-over-week",
-                    "cost_usd": 0.0,
-                },
-            ],
-            "generated_config": {
-                "endpoint": "/api/v1/logs/config/indexes/main",
-                "verb": "PATCH",
-                "payload": {
-                    "name": "main",
-                    "daily_limit": 500,
-                    "retention_days": 30,
-                    "flexible_retention": True,
-                    "alert_threshold_pct": 75,
-                },
-            },
-            "needs_write_scope": True,
-        },
-    ],
-    "sparkline": [
-        # 30-day daily ingestion trend (events), trending up with spike near end
-        2150.0,  # Day 1
-        2155.0,  # Day 2
-        2160.0,  # Day 3
-        2175.0,  # Day 4
-        2180.0,  # Day 5
-        2165.0,  # Day 6
-        2170.0,  # Day 7
-        2185.0,  # Day 8
-        2190.0,  # Day 9
-        2195.0,  # Day 10
-        2210.0,  # Day 11
-        2215.0,  # Day 12
-        2220.0,  # Day 13
-        2225.0,  # Day 14
-        2235.0,  # Day 15
-        2240.0,  # Day 16
-        2250.0,  # Day 17
-        2260.0,  # Day 18
-        2270.0,  # Day 19
-        2280.0,  # Day 20
-        2290.0,  # Day 21
-        2295.0,  # Day 22
-        2310.0,  # Day 23
-        2330.0,  # Day 24
-        2350.0,  # Day 25
-        2375.0,  # Day 26
-        2395.0,  # Day 27
-        2420.0,  # Day 28
-        2500.0,  # Day 29 (spike)
-        2480.0,  # Day 30 (cooling after spike)
-    ],
-    "notes": [
-        "Top opportunity: archive CDN/LB 2xx logs (low risk, high confidence). Implement logs-to-metrics conversion and exclusion filter in parallel.",
-        "Monitor index quota closely: main index trending toward retention limits. Consider tiered retention (hot/cold storage) after quota reduction.",
-    ],
-    "log_cost_map": [
-        {"service": "aws",         "status": "debug", "monthly_events": 1_100_000_000, "monthly_cost_usd": 1870.0,  "share_pct": 38.7},
-        {"service": "nginx",       "status": "200",   "monthly_events": 343_000_000,   "monthly_cost_usd": 583.1,   "share_pct": 12.1},
-        {"service": "payment",     "status": "debug", "monthly_events": 150_000_000,   "monthly_cost_usd": 255.0,   "share_pct": 5.3},
-        {"service": "health",      "status": "200",   "monthly_events": 128_000_000,   "monthly_cost_usd": 217.6,   "share_pct": 4.5},
-        {"service": "cdn-prod",    "status": "200",   "monthly_events": 85_000_000,    "monthly_cost_usd": 144.5,   "share_pct": 3.0},
-        {"service": "api",         "status": "error", "monthly_events": 42_000_000,    "monthly_cost_usd": 71.4,    "share_pct": 1.5},
-        {"service": "api",         "status": "info",  "monthly_events": 38_000_000,    "monthly_cost_usd": 64.6,    "share_pct": 1.3},
-        {"service": "api",         "status": "warn",  "monthly_events": 12_000_000,    "monthly_cost_usd": 20.4,    "share_pct": 0.4},
-        {"service": "scheduler",   "status": "debug", "monthly_events": 9_000_000,     "monthly_cost_usd": 15.3,    "share_pct": 0.3},
-        {"service": "worker",      "status": "200",   "monthly_events": 6_000_000,     "monthly_cost_usd": 10.2,    "share_pct": 0.2},
-        {"service": "cdn-edge",    "status": "200",   "monthly_events": 4_500_000,     "monthly_cost_usd": 7.65,    "share_pct": 0.2},
-        {"service": "metrics-svc", "status": "info",  "monthly_events": 2_000_000,     "monthly_cost_usd": 3.4,     "share_pct": 0.1},
-    ],
-    "log_total_monthly_cost_usd": 3263.15,
-}
+SAMPLE_SCAN = {'total_monthly_waste_usd': 1547.97,
+ 'currency': 'USD',
+ 'region': 'us',
+ 'price_source': 'derived',
+ 'scope_check': {'logs_read': True,
+                 'logs_read_data': True,
+                 'metrics_read': True,
+                 'billing_read': False,
+                 'usage_read': False,
+                 'missing': ['billing_read', 'usage_read'],
+                 'unlocks': {'billing_read': 'exact $ from your bill', 'usage_read': 'index quotas'}},
+ 'scope_gate': False,
+ 'sampled': True,
+ 'lines_examined': 2770,
+ 'patterns': [{'id': 'review-scaleops-process-ended-for-al',
+               'lever': 'pattern_review',
+               'category': 'logs',
+               'service': 'scaleops',
+               'status': '',
+               'title': 'Review high-cost operational pattern: "process ended for already instrumented execution"',
+               'summary': 'Template `process ended for already instrumented execution <NUM>` costs $322.20/mo '
+                          "(15.16% of sampled logs). It's an operational log (not error/noise) — confirm it's needed "
+                          'before sampling.',
+               'monthly_savings_usd': 0.0,
+               'monthly_cost_usd': 322.2,
+               'savings_pct': '0%',
+               'effort': 'low',
+               'confidence': 'low',
+               'evidence': [{'label': 'scaleops · template',
+                             'volume': '189.5M events/mo (15.16% of sampled scaleops)',
+                             'cost_usd': 322.2}],
+               'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                    'verb': 'PUT',
+                                    'payload': {'exclusion_filters': []}},
+               'needs_write_scope': False,
+               'detection_query': "POST /api/v2/logs/events/search query:'*' -> mined templates -> matched process "
+                                  'ended for already instrumented execution <NUM>',
+               'why': 'No strong noise signal detected — kept indexed by default (conservative).',
+               'why_safe': 'High-volume repeated log = 15.16% of your log bill ($322.20/mo). Not an error — confirm '
+                           "it's needed; sampling it could cut most of this.",
+               'template': 'process ended for already instrumented execution <NUM>',
+               'sample_redacted': 'process ended for already instrumented execution 0',
+               'recommended_action': 'review',
+               'noise_score': 0.0,
+               'metered': False,
+               'monthly_events': 189530685,
+               'services': [{'service': 'scaleops', 'count': 420, 'share_pct': 100.0}]},
+              {'id': 'pattern-aws-no-more-objects-to',
+               'lever': 'pattern_exclusion',
+               'category': 'logs',
+               'service': 'aws',
+               'status': '',
+               'title': 'Exclude noisy template: "No more objects to analyze"',
+               'summary': 'Template `No more objects to analyze` accounts for 43.3% of sampled `aws` logs ≈ 541.5M '
+                          'events/mo ($920.58/mo). Recommended: exclude.',
+               'monthly_savings_usd': 920.58,
+               'monthly_cost_usd': 920.58,
+               'savings_pct': '43.3%',
+               'effort': 'low',
+               'confidence': 'medium',
+               'evidence': [{'label': 'aws · template',
+                             'volume': '541.5M events/mo (43.3% of sampled aws)',
+                             'cost_usd': 920.58}],
+               'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                    'verb': 'PUT',
+                                    'payload': {'exclusion_filters': [{'name': 'observabill-aws-no-more-objects-to',
+                                                                       'filter': {'query': '"No more objects to"',
+                                                                                  'sample_rate': 1.0},
+                                                                       'is_enabled': True}]}},
+               'needs_write_scope': True,
+               'detection_query': "POST /api/v2/logs/events/search query:'service:aws' -> mined 2770 sampled msgs -> "
+                                  'template matched 1200 (43.3% of sample)',
+               'why': 'Safe to drop — debug-level log. Carries no unique error signal, so debugging/alerting is '
+                      'unaffected.',
+               'template': 'No more objects to analyze',
+               'sample_redacted': 'No more objects to analyze',
+               'recommended_action': 'exclude',
+               'why_safe': 'Safe to drop — debug-level log. Carries no unique error signal, so debugging/alerting is '
+                           'unaffected.',
+               'noise_score': 0.6,
+               'metered': False,
+               'monthly_events': 541516245,
+               'services': [{'service': 'aws', 'count': 900, 'share_pct': 75.0},
+                            {'service': 'worker', 'count': 300, 'share_pct': 25.0}],
+               'share_pct': 43.32,
+               'cumulative_pct': 36.8},
+              {'id': 'pattern-api-get-ok',
+               'lever': 'pattern_exclusion',
+               'category': 'logs',
+               'service': 'api',
+               'status': '',
+               'title': 'Exclude noisy template: "GET <PATH> <NUM> ok"',
+               'summary': 'Template `GET <PATH> <NUM> ok` accounts for 13.7% of sampled `api` logs ≈ 171.5M '
+                          'events/mo ($291.52/mo). Recommended: exclude.',
+               'monthly_savings_usd': 291.52,
+               'monthly_cost_usd': 291.52,
+               'savings_pct': '13.7%',
+               'effort': 'low',
+               'confidence': 'high',
+               'evidence': [{'label': 'api · template',
+                             'volume': '171.5M events/mo (13.7% of sampled api)',
+                             'cost_usd': 291.52}],
+               'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                    'verb': 'PUT',
+                                    'payload': {'exclusion_filters': [{'name': 'observabill-api-get-ok',
+                                                                       'filter': {'query': '"GET ok"',
+                                                                                  'sample_rate': 1.0},
+                                                                       'is_enabled': True}]}},
+               'needs_write_scope': True,
+               'detection_query': "POST /api/v2/logs/events/search query:'service:api' -> mined 2770 sampled msgs -> "
+                                  'template matched 380 (13.7% of sample)',
+               'why': 'Safe to drop — health/readiness probe traffic; routine success/ack confirmation repeated at '
+                      'volume. Carries no unique error signal, so debugging/alerting is unaffected.',
+               'template': 'GET <PATH> <NUM> ok',
+               'sample_redacted': 'GET /healthz 0 ok',
+               'recommended_action': 'exclude',
+               'why_safe': 'Safe to drop — health/readiness probe traffic; routine success/ack confirmation repeated '
+                           'at volume. Carries no unique error signal, so debugging/alerting is unaffected.',
+               'noise_score': 1.0,
+               'metered': False,
+               'monthly_events': 171480144,
+               'services': [{'service': 'api', 'count': 380, 'share_pct': 100.0}],
+               'share_pct': 13.72,
+               'cumulative_pct': 61.4},
+              {'id': 'pattern-worker-processed-job-completed-successfully',
+               'lever': 'pattern_exclusion',
+               'category': 'logs',
+               'service': 'worker',
+               'status': '',
+               'title': 'Down-sample noisy template: "processed job <*> completed successfully"',
+               'summary': 'Template `processed job <*> completed successfully` accounts for 8.7% of sampled `worker` '
+                          'logs ≈ 108.3M events/mo ($184.12/mo). Recommended: sample.',
+               'monthly_savings_usd': 165.71,
+               'monthly_cost_usd': 184.12,
+               'savings_pct': '8.7%',
+               'effort': 'low',
+               'confidence': 'medium',
+               'evidence': [{'label': 'worker · template',
+                             'volume': '108.3M events/mo (8.7% of sampled worker)',
+                             'cost_usd': 184.12}],
+               'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                    'verb': 'PUT',
+                                    'payload': {'exclusion_filters': [{'name': 'observabill-worker-processed-job-completed-successfully',
+                                                                       'filter': {'query': '"processed job completed '
+                                                                                           'successfully"',
+                                                                                  'sample_rate': 0.9},
+                                                                       'is_enabled': True}]}},
+               'needs_write_scope': True,
+               'detection_query': "POST /api/v2/logs/events/search query:'service:worker' -> mined 2770 sampled msgs "
+                                  '-> template matched 240 (8.7% of sample)',
+               'why': 'Safe to down-sample — routine success/ack confirmation repeated at volume. Carries no unique '
+                      'error signal, so debugging/alerting is unaffected.',
+               'template': 'processed job <*> completed successfully',
+               'sample_redacted': 'processed job job-0 completed successfully',
+               'recommended_action': 'sample',
+               'why_safe': 'Safe to down-sample — routine success/ack confirmation repeated at volume. Carries no '
+                           'unique error signal, so debugging/alerting is unaffected.',
+               'noise_score': 0.5,
+               'metered': False,
+               'monthly_events': 108303249,
+               'services': [{'service': 'worker', 'count': 240, 'share_pct': 100.0}],
+               'share_pct': 8.66,
+               'cumulative_pct': 68.7},
+              {'id': 'pattern-py-svc-deprecationwarning-get-event-loop-is-deprecated',
+               'lever': 'pattern_exclusion',
+               'category': 'logs',
+               'service': 'py-svc',
+               'status': '',
+               'title': 'Exclude noisy template: "DeprecationWarning: get_event_loop is deprecated"',
+               'summary': 'Template `DeprecationWarning: get_event_loop is deprecated use <NUM>` accounts for 6.5% '
+                          'of sampled `py-svc` logs ≈ 81.2M events/mo ($138.09/mo). Recommended: exclude.',
+               'monthly_savings_usd': 138.09,
+               'monthly_cost_usd': 138.09,
+               'savings_pct': '6.5%',
+               'effort': 'low',
+               'confidence': 'medium',
+               'evidence': [{'label': 'py-svc · template',
+                             'volume': '81.2M events/mo (6.5% of sampled py-svc)',
+                             'cost_usd': 138.09}],
+               'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                    'verb': 'PUT',
+                                    'payload': {'exclusion_filters': [{'name': 'observabill-py-svc-deprecationwarning-get-event-loop-is-deprecated',
+                                                                       'filter': {'query': '"DeprecationWarning: '
+                                                                                           'get_event_loop is '
+                                                                                           'deprecated"',
+                                                                                  'sample_rate': 1.0},
+                                                                       'is_enabled': True}]}},
+               'needs_write_scope': True,
+               'detection_query': "POST /api/v2/logs/events/search query:'service:py-svc' -> mined 2770 sampled msgs "
+                                  '-> template matched 180 (6.5% of sample)',
+               'why': 'Safe to drop — deprecation warning (fix at source). Carries no unique error signal, so '
+                      'debugging/alerting is unaffected.',
+               'template': 'DeprecationWarning: get_event_loop is deprecated use <NUM>',
+               'sample_redacted': 'DeprecationWarning: get_event_loop is deprecated use 0',
+               'recommended_action': 'exclude',
+               'why_safe': 'Safe to drop — deprecation warning (fix at source). Carries no unique error signal, so '
+                           'debugging/alerting is unaffected.',
+               'noise_score': 0.5,
+               'metered': False,
+               'monthly_events': 81227436,
+               'services': [{'service': 'py-svc', 'count': 180, 'share_pct': 100.0}],
+               'share_pct': 6.5,
+               'cumulative_pct': 74.3}],
+ 'pattern_leaderboard': [{'template': 'No more objects to analyze',
+                          'count': 1200,
+                          'services': [{'service': 'aws', 'count': 900, 'share_pct': 75.0},
+                                       {'service': 'worker', 'count': 300, 'share_pct': 25.0}],
+                          'hosts': ['h1', 'h2'],
+                          'status_breakdown': {'debug': 1200},
+                          'sample_redacted': 'No more objects to analyze',
+                          'monthly_events': 541516245,
+                          'monthly_cost_usd': 920.58,
+                          'share_pct': 43.32,
+                          'cumulative_pct': 36.8,
+                          'classification': {'is_noise': True,
+                                             'recommendation': 'exclude',
+                                             'confidence': 'medium',
+                                             'why_safe': 'Safe to drop — debug-level log. Carries no unique error '
+                                                         'signal, so debugging/alerting is unaffected.',
+                                             'noise_score': 0.6,
+                                             'metered': False,
+                                             'signal': 'noise'},
+                          'recommended_action': 'exclude'},
+                         {'template': 'process ended for already instrumented execution <NUM>',
+                          'count': 420,
+                          'services': [{'service': 'scaleops', 'count': 420, 'share_pct': 100.0}],
+                          'hosts': ['h4'],
+                          'status_breakdown': {'info': 420},
+                          'sample_redacted': 'process ended for already instrumented execution 0',
+                          'monthly_events': 189530685,
+                          'monthly_cost_usd': 322.2,
+                          'share_pct': 15.16,
+                          'cumulative_pct': 49.7,
+                          'classification': {'is_noise': False,
+                                             'recommendation': 'keep',
+                                             'confidence': 'high',
+                                             'why_safe': 'No strong noise signal detected — kept indexed by default '
+                                                         '(conservative).',
+                                             'noise_score': 0.0,
+                                             'metered': False,
+                                             'signal': 'neutral'},
+                          'recommended_action': 'review'},
+                         {'template': 'GET <PATH> <NUM> ok',
+                          'count': 380,
+                          'services': [{'service': 'api', 'count': 380, 'share_pct': 100.0}],
+                          'hosts': ['h3'],
+                          'status_breakdown': {'info': 380},
+                          'sample_redacted': 'GET /healthz 0 ok',
+                          'monthly_events': 171480144,
+                          'monthly_cost_usd': 291.52,
+                          'share_pct': 13.72,
+                          'cumulative_pct': 61.4,
+                          'classification': {'is_noise': True,
+                                             'recommendation': 'exclude',
+                                             'confidence': 'high',
+                                             'why_safe': 'Safe to drop — health/readiness probe traffic; routine '
+                                                         'success/ack confirmation repeated at volume. Carries no '
+                                                         'unique error signal, so debugging/alerting is unaffected.',
+                                             'noise_score': 1.0,
+                                             'metered': False,
+                                             'signal': 'noise'},
+                          'recommended_action': 'exclude'},
+                         {'template': 'processed job <*> completed successfully',
+                          'count': 240,
+                          'services': [{'service': 'worker', 'count': 240, 'share_pct': 100.0}],
+                          'hosts': ['h5'],
+                          'status_breakdown': {'info': 240},
+                          'sample_redacted': 'processed job job-0 completed successfully',
+                          'monthly_events': 108303249,
+                          'monthly_cost_usd': 184.12,
+                          'share_pct': 8.66,
+                          'cumulative_pct': 68.7,
+                          'classification': {'is_noise': True,
+                                             'recommendation': 'sample',
+                                             'confidence': 'medium',
+                                             'why_safe': 'Safe to down-sample — routine success/ack confirmation '
+                                                         'repeated at volume. Carries no unique error signal, so '
+                                                         'debugging/alerting is unaffected.',
+                                             'noise_score': 0.5,
+                                             'metered': False,
+                                             'signal': 'noise'},
+                          'recommended_action': 'sample'},
+                         {'template': 'DeprecationWarning: get_event_loop is deprecated use <NUM>',
+                          'count': 180,
+                          'services': [{'service': 'py-svc', 'count': 180, 'share_pct': 100.0}],
+                          'hosts': ['h6'],
+                          'status_breakdown': {'warn': 180},
+                          'sample_redacted': 'DeprecationWarning: get_event_loop is deprecated use 0',
+                          'monthly_events': 81227436,
+                          'monthly_cost_usd': 138.09,
+                          'share_pct': 6.5,
+                          'cumulative_pct': 74.3,
+                          'classification': {'is_noise': True,
+                                             'recommendation': 'exclude',
+                                             'confidence': 'medium',
+                                             'why_safe': 'Safe to drop — deprecation warning (fix at source). '
+                                                         'Carries no unique error signal, so debugging/alerting is '
+                                                         'unaffected.',
+                                             'noise_score': 0.5,
+                                             'metered': False,
+                                             'signal': 'noise'},
+                          'recommended_action': 'exclude'},
+                         {'template': 'ERROR failed to connect to database connection refused <NUM>',
+                          'count': 120,
+                          'services': [{'service': 'api', 'count': 120, 'share_pct': 100.0}],
+                          'hosts': ['h7'],
+                          'status_breakdown': {'error': 120},
+                          'sample_redacted': 'ERROR failed to connect to database connection refused 0',
+                          'monthly_events': 54151624,
+                          'monthly_cost_usd': 92.06,
+                          'share_pct': 4.33,
+                          'cumulative_pct': 77.9,
+                          'classification': {'is_noise': False,
+                                             'recommendation': 'keep',
+                                             'confidence': 'high',
+                                             'why_safe': 'Contains error/failure signal — keep indexed for debugging '
+                                                         'and alerting.',
+                                             'noise_score': 0.0,
+                                             'metered': False,
+                                             'signal': 'error'},
+                          'recommended_action': 'keep'},
+                         {'template': 'retry attempt <NUM> for queue orders processing',
+                          'count': 120,
+                          'services': [{'service': 'q1', 'count': 120, 'share_pct': 100.0}],
+                          'hosts': ['h8'],
+                          'status_breakdown': {'info': 120},
+                          'sample_redacted': 'retry attempt 0 for queue orders processing',
+                          'monthly_events': 54151624,
+                          'monthly_cost_usd': 92.06,
+                          'share_pct': 4.33,
+                          'cumulative_pct': 81.6,
+                          'classification': {'is_noise': False,
+                                             'recommendation': 'keep',
+                                             'confidence': 'high',
+                                             'why_safe': 'No strong noise signal detected — kept indexed by default '
+                                                         '(conservative).',
+                                             'noise_score': 0.0,
+                                             'metered': False,
+                                             'signal': 'neutral'},
+                          'recommended_action': 'keep'},
+                         {'template': 'retry attempt <NUM> for queue orders processing backoff',
+                          'count': 110,
+                          'services': [{'service': 'q2', 'count': 110, 'share_pct': 100.0}],
+                          'hosts': ['h9'],
+                          'status_breakdown': {'info': 110},
+                          'sample_redacted': 'retry attempt 0 for queue orders processing backoff',
+                          'monthly_events': 49638989,
+                          'monthly_cost_usd': 84.39,
+                          'share_pct': 3.97,
+                          'cumulative_pct': 85.0,
+                          'classification': {'is_noise': False,
+                                             'recommendation': 'keep',
+                                             'confidence': 'high',
+                                             'why_safe': 'No strong noise signal detected — kept indexed by default '
+                                                         '(conservative).',
+                                             'noise_score': 0.0,
+                                             'metered': False,
+                                             'signal': 'neutral'},
+                          'recommended_action': 'keep'}],
+ 'similar_families': [{'family_terms': ['attempt', 'for', 'orders', 'processing', 'queue', 'retry'],
+                       'members': [{'template': 'retry attempt <NUM> for queue orders processing',
+                                    'count': 120,
+                                    'services': [{'service': 'q1', 'count': 120, 'share_pct': 100.0}],
+                                    'hosts': ['h8'],
+                                    'status_breakdown': {'info': 120},
+                                    'sample_redacted': 'retry attempt 0 for queue orders processing',
+                                    'monthly_events': 54151624,
+                                    'monthly_cost_usd': 92.06,
+                                    'share_pct': 4.33,
+                                    'cumulative_pct': 81.6,
+                                    'classification': {'is_noise': False,
+                                                       'recommendation': 'keep',
+                                                       'confidence': 'high',
+                                                       'why_safe': 'No strong noise signal detected — kept indexed '
+                                                                   'by default (conservative).',
+                                                       'noise_score': 0.0,
+                                                       'metered': False,
+                                                       'signal': 'neutral'},
+                                    'recommended_action': 'keep'},
+                                   {'template': 'retry attempt <NUM> for queue orders processing backoff',
+                                    'count': 110,
+                                    'services': [{'service': 'q2', 'count': 110, 'share_pct': 100.0}],
+                                    'hosts': ['h9'],
+                                    'status_breakdown': {'info': 110},
+                                    'sample_redacted': 'retry attempt 0 for queue orders processing backoff',
+                                    'monthly_events': 49638989,
+                                    'monthly_cost_usd': 84.39,
+                                    'share_pct': 3.97,
+                                    'cumulative_pct': 85.0,
+                                    'classification': {'is_noise': False,
+                                                       'recommendation': 'keep',
+                                                       'confidence': 'high',
+                                                       'why_safe': 'No strong noise signal detected — kept indexed '
+                                                                   'by default (conservative).',
+                                                       'noise_score': 0.0,
+                                                       'metered': False,
+                                                       'signal': 'neutral'},
+                                    'recommended_action': 'keep'}],
+                       'member_count': 2,
+                       'combined_monthly_cost_usd': 176.45,
+                       'combined_query': '"retry attempt for queue" OR "retry attempt for queue"'}],
+ 'surges': [{'kind': 'level_shift',
+             'series': 'aws',
+             'ratio': 1.5,
+             'baseline_mean': 8000000,
+             'recent_mean': 12000000,
+             'onset_date': '2026-07-18',
+             'monthly_excess_events': 120000000,
+             'severity': 120000000,
+             'monthly_cost_usd': 204.0},
+            {'kind': 'new_pattern',
+             'series': 'checkout-svc',
+             'onset_index': 10,
+             'onset_date': '2026-07-11',
+             'recent_daily_avg': 0,
+             'monthly_events': 0,
+             'severity': 0,
+             'monthly_cost_usd': 0.0}],
+ 'anomalies': [{'kind': 'level_shift',
+                'series': 'aws',
+                'ratio': 1.5,
+                'baseline_mean': 8000000,
+                'recent_mean': 12000000,
+                'onset_date': '2026-07-18',
+                'monthly_excess_events': 120000000,
+                'severity': 120000000,
+                'monthly_cost_usd': 204.0},
+               {'kind': 'new_pattern',
+                'series': 'checkout-svc',
+                'onset_index': 10,
+                'onset_date': '2026-07-11',
+                'recent_daily_avg': 0,
+                'monthly_events': 0,
+                'severity': 0,
+                'monthly_cost_usd': 0.0}],
+ 'bill_share_pct': 85.0,
+ 'opportunities': [{'id': 'pattern-aws-no-more-objects-to',
+                    'lever': 'pattern_exclusion',
+                    'category': 'logs',
+                    'service': 'aws',
+                    'status': '',
+                    'title': 'Exclude noisy template: "No more objects to analyze"',
+                    'summary': 'Template `No more objects to analyze` accounts for 43.3% of sampled `aws` logs ≈ '
+                               '541.5M events/mo ($920.58/mo). Recommended: exclude.',
+                    'monthly_savings_usd': 920.58,
+                    'monthly_cost_usd': 920.58,
+                    'savings_pct': '43.3%',
+                    'effort': 'low',
+                    'confidence': 'medium',
+                    'evidence': [{'label': 'aws · template',
+                                  'volume': '541.5M events/mo (43.3% of sampled aws)',
+                                  'cost_usd': 920.58}],
+                    'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                         'verb': 'PUT',
+                                         'payload': {'exclusion_filters': [{'name': 'observabill-aws-no-more-objects-to',
+                                                                            'filter': {'query': '"No more objects '
+                                                                                                'to"',
+                                                                                       'sample_rate': 1.0},
+                                                                            'is_enabled': True}]}},
+                    'needs_write_scope': True,
+                    'detection_query': "POST /api/v2/logs/events/search query:'service:aws' -> mined 2770 sampled "
+                                       'msgs -> template matched 1200 (43.3% of sample)',
+                    'why': 'Safe to drop — debug-level log. Carries no unique error signal, so debugging/alerting is '
+                           'unaffected.',
+                    'template': 'No more objects to analyze',
+                    'sample_redacted': 'No more objects to analyze',
+                    'recommended_action': 'exclude',
+                    'why_safe': 'Safe to drop — debug-level log. Carries no unique error signal, so '
+                                'debugging/alerting is unaffected.',
+                    'noise_score': 0.6,
+                    'metered': False,
+                    'monthly_events': 541516245,
+                    'services': [{'service': 'aws', 'count': 900, 'share_pct': 75.0},
+                                 {'service': 'worker', 'count': 300, 'share_pct': 25.0}],
+                    'share_pct': 43.32,
+                    'cumulative_pct': 36.8},
+                   {'id': 'pattern-api-get-ok',
+                    'lever': 'pattern_exclusion',
+                    'category': 'logs',
+                    'service': 'api',
+                    'status': '',
+                    'title': 'Exclude noisy template: "GET <PATH> <NUM> ok"',
+                    'summary': 'Template `GET <PATH> <NUM> ok` accounts for 13.7% of sampled `api` logs ≈ 171.5M '
+                               'events/mo ($291.52/mo). Recommended: exclude.',
+                    'monthly_savings_usd': 291.52,
+                    'monthly_cost_usd': 291.52,
+                    'savings_pct': '13.7%',
+                    'effort': 'low',
+                    'confidence': 'high',
+                    'evidence': [{'label': 'api · template',
+                                  'volume': '171.5M events/mo (13.7% of sampled api)',
+                                  'cost_usd': 291.52}],
+                    'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                         'verb': 'PUT',
+                                         'payload': {'exclusion_filters': [{'name': 'observabill-api-get-ok',
+                                                                            'filter': {'query': '"GET ok"',
+                                                                                       'sample_rate': 1.0},
+                                                                            'is_enabled': True}]}},
+                    'needs_write_scope': True,
+                    'detection_query': "POST /api/v2/logs/events/search query:'service:api' -> mined 2770 sampled "
+                                       'msgs -> template matched 380 (13.7% of sample)',
+                    'why': 'Safe to drop — health/readiness probe traffic; routine success/ack confirmation repeated '
+                           'at volume. Carries no unique error signal, so debugging/alerting is unaffected.',
+                    'template': 'GET <PATH> <NUM> ok',
+                    'sample_redacted': 'GET /healthz 0 ok',
+                    'recommended_action': 'exclude',
+                    'why_safe': 'Safe to drop — health/readiness probe traffic; routine success/ack confirmation '
+                                'repeated at volume. Carries no unique error signal, so debugging/alerting is '
+                                'unaffected.',
+                    'noise_score': 1.0,
+                    'metered': False,
+                    'monthly_events': 171480144,
+                    'services': [{'service': 'api', 'count': 380, 'share_pct': 100.0}],
+                    'share_pct': 13.72,
+                    'cumulative_pct': 61.4},
+                   {'id': 'pattern-worker-processed-job-completed-successfully',
+                    'lever': 'pattern_exclusion',
+                    'category': 'logs',
+                    'service': 'worker',
+                    'status': '',
+                    'title': 'Down-sample noisy template: "processed job <*> completed successfully"',
+                    'summary': 'Template `processed job <*> completed successfully` accounts for 8.7% of sampled '
+                               '`worker` logs ≈ 108.3M events/mo ($184.12/mo). Recommended: sample.',
+                    'monthly_savings_usd': 165.71,
+                    'monthly_cost_usd': 184.12,
+                    'savings_pct': '8.7%',
+                    'effort': 'low',
+                    'confidence': 'medium',
+                    'evidence': [{'label': 'worker · template',
+                                  'volume': '108.3M events/mo (8.7% of sampled worker)',
+                                  'cost_usd': 184.12}],
+                    'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                         'verb': 'PUT',
+                                         'payload': {'exclusion_filters': [{'name': 'observabill-worker-processed-job-completed-successfully',
+                                                                            'filter': {'query': '"processed job '
+                                                                                                'completed '
+                                                                                                'successfully"',
+                                                                                       'sample_rate': 0.9},
+                                                                            'is_enabled': True}]}},
+                    'needs_write_scope': True,
+                    'detection_query': "POST /api/v2/logs/events/search query:'service:worker' -> mined 2770 sampled "
+                                       'msgs -> template matched 240 (8.7% of sample)',
+                    'why': 'Safe to down-sample — routine success/ack confirmation repeated at volume. Carries no '
+                           'unique error signal, so debugging/alerting is unaffected.',
+                    'template': 'processed job <*> completed successfully',
+                    'sample_redacted': 'processed job job-0 completed successfully',
+                    'recommended_action': 'sample',
+                    'why_safe': 'Safe to down-sample — routine success/ack confirmation repeated at volume. Carries '
+                                'no unique error signal, so debugging/alerting is unaffected.',
+                    'noise_score': 0.5,
+                    'metered': False,
+                    'monthly_events': 108303249,
+                    'services': [{'service': 'worker', 'count': 240, 'share_pct': 100.0}],
+                    'share_pct': 8.66,
+                    'cumulative_pct': 68.7},
+                   {'id': 'pattern-py-svc-deprecationwarning-get-event-loop-is-deprecated',
+                    'lever': 'pattern_exclusion',
+                    'category': 'logs',
+                    'service': 'py-svc',
+                    'status': '',
+                    'title': 'Exclude noisy template: "DeprecationWarning: get_event_loop is deprecated"',
+                    'summary': 'Template `DeprecationWarning: get_event_loop is deprecated use <NUM>` accounts for '
+                               '6.5% of sampled `py-svc` logs ≈ 81.2M events/mo ($138.09/mo). Recommended: exclude.',
+                    'monthly_savings_usd': 138.09,
+                    'monthly_cost_usd': 138.09,
+                    'savings_pct': '6.5%',
+                    'effort': 'low',
+                    'confidence': 'medium',
+                    'evidence': [{'label': 'py-svc · template',
+                                  'volume': '81.2M events/mo (6.5% of sampled py-svc)',
+                                  'cost_usd': 138.09}],
+                    'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                         'verb': 'PUT',
+                                         'payload': {'exclusion_filters': [{'name': 'observabill-py-svc-deprecationwarning-get-event-loop-is-deprecated',
+                                                                            'filter': {'query': '"DeprecationWarning: '
+                                                                                                'get_event_loop is '
+                                                                                                'deprecated"',
+                                                                                       'sample_rate': 1.0},
+                                                                            'is_enabled': True}]}},
+                    'needs_write_scope': True,
+                    'detection_query': "POST /api/v2/logs/events/search query:'service:py-svc' -> mined 2770 sampled "
+                                       'msgs -> template matched 180 (6.5% of sample)',
+                    'why': 'Safe to drop — deprecation warning (fix at source). Carries no unique error signal, so '
+                           'debugging/alerting is unaffected.',
+                    'template': 'DeprecationWarning: get_event_loop is deprecated use <NUM>',
+                    'sample_redacted': 'DeprecationWarning: get_event_loop is deprecated use 0',
+                    'recommended_action': 'exclude',
+                    'why_safe': 'Safe to drop — deprecation warning (fix at source). Carries no unique error signal, '
+                                'so debugging/alerting is unaffected.',
+                    'noise_score': 0.5,
+                    'metered': False,
+                    'monthly_events': 81227436,
+                    'services': [{'service': 'py-svc', 'count': 180, 'share_pct': 100.0}],
+                    'share_pct': 6.5,
+                    'cumulative_pct': 74.3},
+                   {'id': 'field_bloat:trace_stack',
+                    'lever': 'field_bloat',
+                    'category': 'logs',
+                    'service': '',
+                    'title': 'Trim bloated field `trace_stack`',
+                    'summary': 'Field `trace_stack` averages 1600 bytes and appears in 100% of sampled events — '
+                               'trimming it via a log pipeline remap/remove reduces ingested GB.',
+                    'monthly_savings_usd': 32.0,
+                    'monthly_cost_usd': 32.0,
+                    'savings_pct': 'ingest-reduction',
+                    'effort': 'medium',
+                    'confidence': 'medium',
+                    'evidence': [{'label': 'trace_stack',
+                                  'volume': '1600 bytes avg · 100% of events',
+                                  'cost_usd': 32.0}],
+                    'generated_config': {'endpoint': '/api/v1/logs/config/pipelines',
+                                         'verb': 'POST',
+                                         'payload': {'name': 'observabill-trim-trace_stack',
+                                                     'filter': {'query': '*'},
+                                                     'processors': [{'type': 'string-builder-processor',
+                                                                     'sources': ['trace_stack'],
+                                                                     'is_enabled': True,
+                                                                     'note': 'remove/shorten this large '
+                                                                             'attribute'}]}},
+                    'needs_write_scope': True,
+                    'detection_query': 'sampled events → field `trace_stack` flagged as large_field',
+                    'why': 'Field `trace_stack` averages 1600 bytes and appears in 100% of sampled events — trimming '
+                           'it via a log pipeline remap/remove reduces ingested GB.',
+                    'why_safe': 'Field `trace_stack` averages 1600 bytes and appears in 100% of sampled events — '
+                                'trimming it via a log pipeline remap/remove reduces ingested GB.',
+                    'recommended_action': 'trim_fields',
+                    'field_name': 'trace_stack',
+                    'cardinality': 1},
+                   {'id': 'field_bloat:request_id',
+                    'lever': 'field_bloat',
+                    'category': 'logs',
+                    'service': '',
+                    'title': 'Reduce cardinality of bloated field `request_id`',
+                    'summary': 'Field `request_id` has ~300 distinct values across 300 events (100% unique) — '
+                               'near-unbounded cardinality bloats indexing and any facet on it; drop or hash it.',
+                    'monthly_savings_usd': 0.07,
+                    'monthly_cost_usd': 0.07,
+                    'savings_pct': 'ingest-reduction',
+                    'effort': 'medium',
+                    'confidence': 'medium',
+                    'evidence': [{'label': 'request_id',
+                                  'volume': '300 distinct values (100% unique)',
+                                  'cost_usd': 0.07}],
+                    'generated_config': {'endpoint': '/api/v1/logs/config/pipelines',
+                                         'verb': 'POST',
+                                         'payload': {'name': 'observabill-trim-request_id',
+                                                     'filter': {'query': '*'},
+                                                     'processors': [{'type': 'attribute-remapper',
+                                                                     'sources': ['request_id'],
+                                                                     'is_enabled': True,
+                                                                     'note': 'hash or drop this attribute to cut '
+                                                                             'cardinality'}]}},
+                    'needs_write_scope': True,
+                    'detection_query': 'sampled events → field `request_id` flagged as high_cardinality',
+                    'why': 'Field `request_id` has ~300 distinct values across 300 events (100% unique) — '
+                           'near-unbounded cardinality bloats indexing and any facet on it; drop or hash it.',
+                    'why_safe': 'Field `request_id` has ~300 distinct values across 300 events (100% unique) — '
+                                'near-unbounded cardinality bloats indexing and any facet on it; drop or hash it.',
+                    'recommended_action': 'reduce_cardinality',
+                    'field_name': 'request_id',
+                    'cardinality': 300},
+                   {'id': 'review-scaleops-process-ended-for-al',
+                    'lever': 'pattern_review',
+                    'category': 'logs',
+                    'service': 'scaleops',
+                    'status': '',
+                    'title': 'Review high-cost operational pattern: "process ended for already instrumented '
+                             'execution"',
+                    'summary': 'Template `process ended for already instrumented execution <NUM>` costs $322.20/mo '
+                               "(15.16% of sampled logs). It's an operational log (not error/noise) — confirm it's "
+                               'needed before sampling.',
+                    'monthly_savings_usd': 0.0,
+                    'monthly_cost_usd': 322.2,
+                    'savings_pct': '0%',
+                    'effort': 'low',
+                    'confidence': 'low',
+                    'evidence': [{'label': 'scaleops · template',
+                                  'volume': '189.5M events/mo (15.16% of sampled scaleops)',
+                                  'cost_usd': 322.2}],
+                    'generated_config': {'endpoint': '/api/v1/logs/config/indexes/main',
+                                         'verb': 'PUT',
+                                         'payload': {'exclusion_filters': []}},
+                    'needs_write_scope': False,
+                    'detection_query': "POST /api/v2/logs/events/search query:'*' -> mined templates -> matched "
+                                       'process ended for already instrumented execution <NUM>',
+                    'why': 'No strong noise signal detected — kept indexed by default (conservative).',
+                    'why_safe': 'High-volume repeated log = 15.16% of your log bill ($322.20/mo). Not an error — '
+                                "confirm it's needed; sampling it could cut most of this.",
+                    'template': 'process ended for already instrumented execution <NUM>',
+                    'sample_redacted': 'process ended for already instrumented execution 0',
+                    'recommended_action': 'review',
+                    'noise_score': 0.0,
+                    'metered': False,
+                    'monthly_events': 189530685,
+                    'services': [{'service': 'scaleops', 'count': 420, 'share_pct': 100.0}]}],
+ 'field_bloat': [{'field_name': 'trace_stack',
+                  'kind': 'large_field',
+                  'frequency': 1.0,
+                  'avg_bytes': 1600.0,
+                  'cardinality': 1,
+                  'cardinality_ratio': 0.003,
+                  'recommendation': 'trim_fields',
+                  'why_safe': 'Field `trace_stack` averages 1600 bytes and appears in 100% of sampled events — '
+                              'trimming it via a log pipeline remap/remove reduces ingested GB.',
+                  'impact': 1600.0},
+                 {'field_name': 'request_id',
+                  'kind': 'high_cardinality',
+                  'frequency': 1.0,
+                  'avg_bytes': 3.6,
+                  'cardinality': 300,
+                  'cardinality_ratio': 1.0,
+                  'recommendation': 'reduce_cardinality',
+                  'why_safe': 'Field `request_id` has ~300 distinct values across 300 events (100% unique) — '
+                              'near-unbounded cardinality bloats indexing and any facet on it; drop or hash it.',
+                  'impact': 3.6333333333333333}],
+ 'sparkline': [4.1,
+               4.2,
+               4.0,
+               4.3,
+               4.15,
+               4.05,
+               4.2,
+               4.25,
+               4.1,
+               4.0,
+               4.3,
+               4.2,
+               4.1,
+               4.05,
+               4.15,
+               4.2,
+               4.3,
+               4.25,
+               4.1,
+               4.2,
+               4.15,
+               4.05,
+               4.2,
+               4.3,
+               4.25,
+               4.1,
+               4.2,
+               4.3,
+               4.5,
+               4.8],
+ 'notes': ['Examined 2770 sampled log lines account-wide (representative, not exhaustive).'],
+ 'log_cost_map': [{'service': 'aws',
+                   'status': 'debug',
+                   'monthly_events': 1071428571,
+                   'monthly_cost_usd': 1821.43,
+                   'share_pct': 70.62},
+                  {'service': 'scaleops',
+                   'status': 'info',
+                   'monthly_events': 222857142,
+                   'monthly_cost_usd': 378.86,
+                   'share_pct': 14.69},
+                  {'service': 'worker',
+                   'status': 'info',
+                   'monthly_events': 171428571,
+                   'monthly_cost_usd': 291.43,
+                   'share_pct': 11.3},
+                  {'service': 'api',
+                   'status': 'error',
+                   'monthly_events': 51428571,
+                   'monthly_cost_usd': 87.43,
+                   'share_pct': 3.39}],
+ 'log_total_monthly_cost_usd': 2579.15}
 
 
-# ============================================================================
-# DATADOG API RESPONSE FIXTURES (real shapes)
-# ============================================================================
-
-
-# Logs aggregate response: services by status, high-volume 2xx requests
 LOGS_AGGREGATE_RESP = {
     "data": {
         "buckets": [
@@ -703,35 +1149,37 @@ INDEXES_RESP = {
 
 
 def _validate_sample_scan():
-    """Validate that SAMPLE_SCAN is internally consistent."""
-    total_evidence_cost = 0.0
+    """Validate that SAMPLE_SCAN is internally consistent (v2 content-intelligence contract)."""
     total_opportunities = 0.0
 
     for opp in SAMPLE_SCAN["opportunities"]:
-        opp_cost = sum(ev["cost_usd"] for ev in opp["evidence"])
-        total_evidence_cost += opp_cost
         total_opportunities += opp["monthly_savings_usd"]
+        # v2: realized savings must never exceed the full monthly cost of the pattern.
+        full_cost = opp.get("monthly_cost_usd", opp["monthly_savings_usd"])
+        assert (
+            opp["monthly_savings_usd"] <= full_cost + 0.01
+        ), f"{opp['id']}: realized savings ${opp['monthly_savings_usd']:.2f} > full cost ${full_cost:.2f}"
+        # every pattern/field opportunity must carry a safety rationale.
+        assert opp.get("why_safe"), f"{opp['id']}: missing why_safe"
 
-        # Evidence should roughly sum to opportunity savings (within 10% for rounding)
-        if opp["monthly_savings_usd"] > 0:
-            ratio = opp_cost / opp["monthly_savings_usd"]
-            assert (
-                0.9 <= ratio <= 1.1
-            ), f"{opp['id']}: evidence cost ${opp_cost:.0f} doesn't match savings ${opp['monthly_savings_usd']:.0f}"
-
-    # Total opportunities should match scan total
     assert (
         abs(total_opportunities - SAMPLE_SCAN["total_monthly_waste_usd"]) < 1.0
     ), f"Opportunities sum ${total_opportunities:.0f} != scan total ${SAMPLE_SCAN['total_monthly_waste_usd']:.0f}"
 
-    # Sparkline should be 30 points
     assert (
         len(SAMPLE_SCAN["sparkline"]) == 30
     ), f"Sparkline has {len(SAMPLE_SCAN['sparkline'])} points, expected 30"
 
-    # Opportunities should be sorted descending by monthly_savings_usd
     savings = [opp["monthly_savings_usd"] for opp in SAMPLE_SCAN["opportunities"]]
     assert savings == sorted(savings, reverse=True), "Opportunities not sorted by savings (descending)"
+
+    # v3 pattern-first surfaces present
+    for key in ("patterns", "pattern_leaderboard", "similar_families", "surges",
+                "bill_share_pct", "scope_gate", "field_bloat", "lines_examined", "sampled"):
+        assert key in SAMPLE_SCAN, f"SAMPLE_SCAN missing v3 key: {key}"
+    # leaderboard rows carry a recommended_action + cumulative_pct
+    for row in SAMPLE_SCAN["pattern_leaderboard"]:
+        assert "recommended_action" in row and "cumulative_pct" in row
 
 
 _validate_sample_scan()

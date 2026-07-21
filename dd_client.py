@@ -434,6 +434,59 @@ def _http_write(
         return (exc.code, dict(exc.headers), exc.read())
 
 
+def read(
+    path: str,
+    api_key: str,
+    app_key: str,
+    site: str = "us1",
+) -> dict:
+    """Execute a GET request against the Datadog API.
+
+    Used by remediate.py for READ-MERGE safety: get current index config
+    before applying filters so we never full-replace and lose customer data.
+
+    Parameters
+    ----------
+    path    : str  — API path, e.g. "/api/v1/logs/config/indexes/main"
+    api_key : str  — Datadog API key (headers only, never logged)
+    app_key : str  — Datadog application key (headers only, never logged)
+    site    : str  — Datadog site identifier (default "us1")
+
+    Returns
+    -------
+    Parsed JSON dict on success (2xx).
+
+    Raises
+    ------
+    AuthError        on 401
+    PermissionError  on 403
+    RateLimitError   on 429
+    DatadogError     on other non-2xx
+    """
+    _base = base_url(site)
+    url = f"{_base}{path}"
+
+    headers = {
+        "DD-API-KEY": api_key,
+        "DD-APPLICATION-KEY": app_key,
+    }
+
+    status, resp_body = _http_get(url, headers)
+
+    if 200 <= status < 300:
+        return json.loads(resp_body.decode("utf-8"))
+
+    # Error handling (same as write)
+    if status == 401:
+        raise AuthError(f"HTTP {status}: Unauthorized (invalid API/app key)")
+    elif status == 403:
+        raise PermissionError(f"HTTP {status}: Forbidden (insufficient permissions)")
+    elif status == 429:
+        raise RateLimitError(f"HTTP {status}: Rate limit exceeded")
+    else:
+        raise DatadogError(f"HTTP {status}: Error reading {path}")
+
+
 def write(
     path: str,
     verb: str,
