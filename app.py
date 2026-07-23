@@ -203,6 +203,18 @@ h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 8px; color: #0f172a; }
     margin-bottom: 24px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.08);
 }
+/* Pricing tiers: equal visual weight + lift on hover */
+.pricing-card {
+    display: flex;
+    flex-direction: column;
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.pricing-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 28px rgba(15,23,42,0.12);
+    border-color: #059669;
+}
+.pricing-card ul { flex: 1 1 auto; }
 
 input[type="text"], input[type="password"], input[type="email"] {
     width: 100%;
@@ -1420,7 +1432,7 @@ def page_pricing():
   </div>
 
   <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:28px; margin-bottom:48px;">
-    <div class="card">
+    <div class="card pricing-card">
       <h2 style="color:#059669; margin-bottom:12px;">Free Scan</h2>
       <div style="font-size:2rem; font-weight:700; color:#0f172a; margin-bottom:16px;">$0</div>
       <ul style="list-style:none; margin-bottom:24px; color:#475569;">
@@ -1433,7 +1445,7 @@ def page_pricing():
       <a href="/" class="btn btn-primary" style="width:100%;">Start Scanning →</a>
     </div>
 
-    <div class="card" style="border:2px solid #059669; box-shadow: 0 8px 24px rgba(5,150,105,0.15);">
+    <div class="card pricing-card" style="border:2px solid #059669; box-shadow: 0 8px 24px rgba(5,150,105,0.15);">
       <div style="background:#f0fdf4; border-radius:6px; padding:8px 14px; display:inline-block; margin-bottom:12px;">
         <span style="color:#059669; font-weight:700; font-size:0.8rem;">POPULAR</span>
       </div>
