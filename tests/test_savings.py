@@ -1579,3 +1579,88 @@ class TestScanPatternFirst:
         monkeypatch.setattr(savings, "_http_post", fake_http_post)
         result = savings.scan(api_key="key", app_key="app", site="us1")
         assert result["patterns"] == []
+
+
+# ---------------------------------------------------------------------------
+# 14. Progress callback support (PART A of async work)
+# ---------------------------------------------------------------------------
+
+class TestProgressCallback:
+    """savings.scan(progress_cb=...) should call progress_cb(stage, pct) at milestones."""
+
+    def _make_http_mock(self, monkeypatch):
+        _empty_events = {"data": [], "meta": {"page": {"after": None}}}
+
+        def fake_http_get(url: str, headers: dict, timeout: int = 15):
+            if "/api/v1/usage/logs" in url:
+                return (200, {}, json.dumps(USAGE_LOGS_FIXTURE).encode())
+            elif "/api/v1/logs/config/indexes" in url:
+                return (200, {}, json.dumps(LOGS_INDEXES_FIXTURE).encode())
+            elif "/api/v2/logs/config/metrics" in url:
+                return (200, {}, json.dumps({"data": []}).encode())
+            elif "/api/v2/metrics" in url and "/volumes" in url:
+                return (200, {}, json.dumps(METRIC_VOLUMES_LOW_CARDINALITY).encode())
+            elif "/api/v2/metrics" in url:
+                return (200, {}, json.dumps(METRICS_LIST_FIXTURE).encode())
+            elif "/api/v2/usage/estimated_cost" in url:
+                return (200, {}, json.dumps(ESTIMATED_COST_FIXTURE).encode())
+            else:
+                return (200, {}, b"{}")
+
+        def fake_http_post(url: str, headers: dict, body_bytes: bytes, timeout: int = 30):
+            if "/api/v2/logs/events/search" in url:
+                return (200, {}, json.dumps(_empty_events).encode())
+            if "/api/v2/logs/analytics/aggregate" in url:
+                return (200, {}, json.dumps(LOGS_AGGREGATE_FIXTURE).encode())
+            return (200, {}, b"{}")
+
+        monkeypatch.setattr(savings, "_http_get", fake_http_get)
+        monkeypatch.setattr(savings, "_http_post", fake_http_post)
+
+    def test_scan_accepts_progress_cb_kwarg(self, monkeypatch):
+        """savings.scan(..., progress_cb=...) must not crash."""
+        self._make_http_mock(monkeypatch)
+        calls = []
+        def capture_cb(stage, pct):
+            calls.append((stage, pct))
+        result = savings.scan(api_key="key", app_key="app", site="us1", progress_cb=capture_cb)
+        assert "total_monthly_waste_usd" in result
+
+    def test_scan_progress_cb_receives_stages(self, monkeypatch):
+        """progress_cb must be called with (stage, pct) tuples."""
+        self._make_http_mock(monkeypatch)
+        calls = []
+        def capture_cb(stage, pct):
+            calls.append((stage, pct))
+        savings.scan(api_key="key", app_key="app", site="us1", progress_cb=capture_cb)
+        # Must have at least one call
+        assert len(calls) > 0, "progress_cb was never called"
+        # Each call should be a (str, int/float) tuple
+        for stage, pct in calls:
+            assert isinstance(stage, str)
+            assert isinstance(pct, (int, float))
+
+    def test_scan_progress_cb_reaches_done(self, monkeypatch):
+        """progress_cb must include a ("Done", 100) call."""
+        self._make_http_mock(monkeypatch)
+        calls = []
+        def capture_cb(stage, pct):
+            calls.append((stage, pct))
+        savings.scan(api_key="key", app_key="app", site="us1", progress_cb=capture_cb)
+        # Last call should be ("Done", 100)
+        assert calls[-1] == ("Done", 100), f"Expected ('Done', 100), got {calls[-1]}"
+
+    def test_scan_progress_cb_none_is_safe(self, monkeypatch):
+        """savings.scan without progress_cb (None) must work (backward compat)."""
+        self._make_http_mock(monkeypatch)
+        result = savings.scan(api_key="key", app_key="app", site="us1", progress_cb=None)
+        assert "total_monthly_waste_usd" in result
+
+    def test_scan_progress_cb_exception_swallowed(self, monkeypatch):
+        """If progress_cb raises an exception, scan must continue (fail-safe)."""
+        self._make_http_mock(monkeypatch)
+        def bad_cb(stage, pct):
+            raise RuntimeError("oops")
+        result = savings.scan(api_key="key", app_key="app", site="us1", progress_cb=bad_cb)
+        # Scan should complete despite callback error
+        assert "total_monthly_waste_usd" in result

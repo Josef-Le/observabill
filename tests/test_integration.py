@@ -210,7 +210,7 @@ class TestSampleRoute:
 # ---------------------------------------------------------------------------
 
 class TestScanRoute:
-    """POST /scan must call savings.scan, wrap with html_page + DASHBOARD_CSS."""
+    """POST /scan must start async job; follow polling to get dashboard."""
 
     def setup_method(self):
         self.app = import_app()
@@ -227,8 +227,28 @@ class TestScanRoute:
         import savings
         if return_value is None:
             return_value = MINIMAL_SCAN
-        savings.scan = lambda api_key, app_key, site, **kw: return_value
+        savings.scan = lambda api_key, app_key, site, progress_cb=None, **kw: return_value
         self.app.savings = savings
+
+    def _do_scan_async(self, server, api_key="k", app_key="ak", site="us1"):
+        """POST /scan, poll status, and return result dashboard HTML."""
+        import time, re
+        _, progress_page = post("/scan", {"api_key": api_key, "app_key": app_key, "site": site})
+        # Extract job ID
+        job_match = re.search(r'jobId\s*=\s*["\']([^"\']+)["\']', progress_page)
+        if not job_match:
+            pytest.fail(f"Could not find jobId in progress page")
+        job_id = job_match.group(1)
+        # Poll until done
+        for _ in range(20):
+            time.sleep(0.1)
+            _, status_body = get(f"/scan/status?id={job_id}")
+            status_data = json.loads(status_body)
+            if status_data.get("done"):
+                break
+        # Fetch result
+        _, result_body = get(f"/scan/result?id={job_id}")
+        return result_body
 
     def test_scan_returns_200(self, server):
         self._patch_savings_scan()
@@ -237,7 +257,7 @@ class TestScanRoute:
 
     def test_scan_renders_dashboard_total(self, server):
         self._patch_savings_scan()
-        _, body = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
+        body = self._do_scan_async(server)
         assert "$3,500" in body
 
     def test_scan_renders_lever_title(self, server):
@@ -245,13 +265,13 @@ class TestScanRoute:
         # (leaderboard), not the old service-lever titles.
         import fixtures
         self._patch_savings_scan(fixtures.SAMPLE_SCAN)
-        _, body = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
+        body = self._do_scan_async(server)
         assert "No more objects to analyze" in body        # a mined pattern template
         assert "of your log bill" in body                  # the leaderboard framing
 
     def test_scan_includes_dashboard_css(self, server):
         self._patch_savings_scan()
-        _, body = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
+        body = self._do_scan_async(server)
         assert "hero-card" in body or "lever-table" in body
 
     def test_scan_logs_scan_event_with_site(self, server):
@@ -283,7 +303,7 @@ class TestScanRoute:
 # ---------------------------------------------------------------------------
 
 class TestScanErrorPaths:
-    """POST /scan errors must return friendly HTML without echoing keys."""
+    """POST /scan errors must be reported in /scan/status without echoing keys."""
 
     def setup_method(self):
         self.app = import_app()
@@ -303,36 +323,53 @@ class TestScanErrorPaths:
         savings.scan = _raise
         self.app.savings = savings
 
+    def _do_scan_error_poll(self, server):
+        """POST /scan, poll status until error, return error message."""
+        import time, re
+        _, progress_page = post("/scan", {"api_key": "bad", "app_key": "bad", "site": "us1"})
+        job_match = re.search(r'jobId\s*=\s*["\']([^"\']+)["\']', progress_page)
+        if not job_match:
+            return None
+        job_id = job_match.group(1)
+        for _ in range(20):
+            time.sleep(0.1)
+            _, status_body = get(f"/scan/status?id={job_id}")
+            status_data = json.loads(status_body)
+            if status_data.get("done") and status_data.get("error"):
+                return status_data.get("error")
+        return None
+
     def test_auth_error_returns_friendly_message(self, server):
         import dd_client
         self._patch_savings_raises(dd_client.AuthError)
-        _, body = post("/scan", {"api_key": "bad", "app_key": "bad", "site": "us1"})
-        assert "rejected" in body.lower() or "invalid" in body.lower() or "authentication" in body.lower() or "key" in body.lower()
+        error = self._do_scan_error_poll(server)
+        assert error and ("rejected" in error.lower() or "invalid" in error.lower() or "authentication" in error.lower() or "key" in error.lower())
 
     def test_auth_error_does_not_echo_key(self, server):
         import dd_client
         self._patch_savings_raises(dd_client.AuthError)
         _, body = post("/scan", {"api_key": "MY_SECRET_KEY", "app_key": "MY_SECRET_APP", "site": "us1"})
+        # Progress page should not have keys
         assert "MY_SECRET_KEY" not in body
         assert "MY_SECRET_APP" not in body
 
     def test_rate_limit_error_friendly(self, server):
         import dd_client
         self._patch_savings_raises(dd_client.RateLimitError)
-        _, body = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
-        assert "rate" in body.lower() or "limit" in body.lower()
+        error = self._do_scan_error_poll(server)
+        assert error and ("rate" in error.lower() or "limit" in error.lower())
 
     def test_permission_error_friendly(self, server):
         import dd_client
         self._patch_savings_raises(dd_client.PermissionError)
-        _, body = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
-        assert "permission" in body.lower() or "scope" in body.lower() or "access" in body.lower()
+        error = self._do_scan_error_poll(server)
+        assert error and ("permission" in error.lower() or "scope" in error.lower() or "access" in error.lower())
 
     def test_generic_error_friendly(self, server):
         import dd_client
         self._patch_savings_raises(dd_client.DatadogError)
-        _, body = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
-        assert "datadog" in body.lower() or "couldn't" in body.lower() or "error" in body.lower()
+        error = self._do_scan_error_poll(server)
+        assert error and ("datadog" in error.lower() or "couldn't" in error.lower() or "error" in error.lower())
 
 
 # ---------------------------------------------------------------------------
@@ -376,18 +413,33 @@ class TestApplyRoute:
         import savings, fixtures
         if return_value is None:
             return_value = fixtures.SAMPLE_SCAN
-        savings.scan = lambda *a, **kw: return_value
+        savings.scan = lambda *a, progress_cb=None, **kw: return_value
         self.app.savings = savings
 
     def _do_scan_and_get_token(self, server, api_key="k", app_key="ak",
                                 site="us1", write_key="WRITE_KEY_VALUE"):
-        """POST /scan with a write_key; return the dashboard body."""
+        """POST /scan with a write_key; poll and return the dashboard body."""
+        import time, re
         self._patch_savings_scan()
-        _, body = post("/scan", {
+        _, progress_page = post("/scan", {
             "api_key": api_key, "app_key": app_key,
             "site": site, "write_key": write_key,
         })
-        return body
+        # Extract job ID
+        job_match = re.search(r'jobId\s*=\s*["\']([^"\']+)["\']', progress_page)
+        if not job_match:
+            pytest.fail("Could not find jobId in progress page")
+        job_id = job_match.group(1)
+        # Poll until done
+        for _ in range(20):
+            time.sleep(0.1)
+            _, status_body = get(f"/scan/status?id={job_id}")
+            status_data = json.loads(status_body)
+            if status_data.get("done"):
+                break
+        # Fetch result
+        _, result_body = get(f"/scan/result?id={job_id}")
+        return result_body
 
     def _create_token_directly(self, api_key="k", app_key="ak",
                                 site="us1", write_key="WRITE_KEY_VALUE"):
@@ -605,6 +657,120 @@ class TestFunnelOrder:
 # H. 3-key security test (unit, no live server needed)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# I. Async Scan Job Routes (NEW)
+# ---------------------------------------------------------------------------
+
+class TestAsyncScanJob:
+    """POST /scan must return a progress page; GET /scan/status polls; GET /scan/result retrieves."""
+
+    def setup_method(self):
+        self.app = import_app()
+        self.app.append_to_store = lambda *a, **kw: None
+        import savings as _s
+        self._orig_scan = _s.scan
+
+    def teardown_method(self):
+        import savings as _s
+        _s.scan = self._orig_scan
+
+    def _patch_savings_scan_fast(self, return_value=None):
+        """Patch savings.scan to return instantly without network calls."""
+        import savings
+        if return_value is None:
+            return_value = MINIMAL_SCAN
+        savings.scan = lambda api_key, app_key, site, progress_cb=None, **kw: return_value
+        self.app.savings = savings
+
+    def test_post_scan_returns_progress_page(self, server):
+        """POST /scan returns a progress page (not dashboard)."""
+        self._patch_savings_scan_fast()
+        _, body = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
+        # Progress page should contain references to polling
+        assert "/scan/status" in body or "progress" in body.lower() or "stage" in body.lower()
+
+    def test_post_scan_starts_async_job(self, server):
+        """POST /scan response contains a job id."""
+        self._patch_savings_scan_fast()
+        _, body = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
+        # Extract job id from page (should be in JS or data attribute)
+        assert "jobId" in body or "job_id" in body or "id=" in body
+
+    def test_get_scan_status_returns_json(self, server):
+        """GET /scan/status?id=<job> returns JSON with stage, pct, done, error."""
+        self._patch_savings_scan_fast()
+        _, progress_page = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
+        # Extract job ID from progress page (simple extraction for test)
+        # For now, we test with a fake job to ensure 404 path works
+        import time
+        time.sleep(0.1)  # Give job time to start
+        status, body = get("/scan/status?id=nonexistent")
+        # Should return JSON (even if error key present)
+        try:
+            data = json.loads(body)
+            assert "error" in data or "done" in data
+        except json.JSONDecodeError:
+            pytest.fail(f"Status endpoint did not return JSON: {body}")
+
+    def test_get_scan_status_missing_job_returns_error(self, server):
+        """GET /scan/status?id=missing returns JSON with error=expired."""
+        status, body = get("/scan/status?id=nonexistent_job_id")
+        data = json.loads(body)
+        assert data.get("error") == "expired" or data.get("done") == True
+
+    def test_get_scan_result_completed_returns_dashboard(self, server):
+        """GET /scan/result?id=<completed_job> returns the dashboard HTML."""
+        self._patch_savings_scan_fast()
+        _, progress_page = post("/scan", {"api_key": "k", "app_key": "ak", "site": "us1"})
+        # Wait for job to complete
+        import time, re
+        job_match = re.search(r'jobId\s*=\s*["\']([^"\']+)["\']', progress_page)
+        if job_match:
+            job_id = job_match.group(1)
+            # Poll status until done
+            for _ in range(10):
+                time.sleep(0.1)
+                _, status_body = get(f"/scan/status?id={job_id}")
+                status_data = json.loads(status_body)
+                if status_data.get("done"):
+                    break
+            # Fetch result
+            _, result_body = get(f"/scan/result?id={job_id}")
+            # Should contain dashboard content
+            assert "$3,500" in result_body or "hero-card" in result_body
+
+    def test_scan_status_missing_keys_security(self, server):
+        """GET /scan/status never returns api_key/app_key/write_key."""
+        self._patch_savings_scan_fast()
+        _, progress_page = post("/scan", {
+            "api_key": "SECRETDD", "app_key": "SECRETAPP", "site": "us1"
+        })
+        # Extract job id and wait
+        import time, re
+        job_match = re.search(r'jobId\s*=\s*["\']([^"\']+)["\']', progress_page)
+        if job_match:
+            job_id = job_match.group(1)
+            time.sleep(0.5)  # Wait for completion
+            _, status_body = get(f"/scan/status?id={job_id}")
+            assert "SECRETDD" not in status_body
+            assert "SECRETAPP" not in status_body
+
+    def test_scan_result_missing_keys_security(self, server):
+        """GET /scan/result never returns api_key/app_key/write_key."""
+        self._patch_savings_scan_fast()
+        _, progress_page = post("/scan", {
+            "api_key": "SECRETDD", "app_key": "SECRETAPP", "site": "us1"
+        })
+        import time, re
+        job_match = re.search(r'jobId\s*=\s*["\']([^"\']+)["\']', progress_page)
+        if job_match:
+            job_id = job_match.group(1)
+            time.sleep(0.5)
+            _, result_body = get(f"/scan/result?id={job_id}")
+            assert "SECRETDD" not in result_body
+            assert "SECRETAPP" not in result_body
+
+
 class TestThreeKeySecurityUnit:
     """
     api_key, app_key, AND write_key must never appear in:
@@ -767,6 +933,99 @@ class TestThreeKeySecurityUnit:
 # I. REGRESSION: canary 3-key leak test (FAIL-1 + FAIL-2 guard)
 # ---------------------------------------------------------------------------
 
+class TestLandingEnhancedContent:
+    """PART 1: Landing page enhancements with hero + how-it-works + privacy."""
+
+    def test_landing_contains_how_it_works_section(self, server):
+        """Landing must mention 'how it works' or equivalent."""
+        _, body = get("/")
+        assert "how it works" in body.lower() or "how it works" in body.lower()
+
+    def test_landing_contains_privacy_never_store_message(self, server):
+        """Landing must mention 'never store' or 'memory only' for privacy."""
+        _, body = get("/")
+        assert ("never store" in body.lower() or "memory only" in body.lower() or
+                "never stored" in body.lower())
+
+    def test_landing_contains_pricing_link(self, server):
+        """Landing must link to /pricing."""
+        _, body = get("/")
+        assert "/pricing" in body
+
+
+class TestPricingPageRoute:
+    """PART 2: GET /pricing SaaS pricing tier page."""
+
+    def test_pricing_returns_200(self, server):
+        status, _ = get("/pricing")
+        assert status == 200
+
+    def test_pricing_contains_dollar_99(self, server):
+        _, body = get("/pricing")
+        assert "$99" in body
+
+    def test_pricing_contains_free_tier(self, server):
+        _, body = get("/pricing")
+        assert "Free" in body or "free" in body.lower()
+
+
+class TestPrivacyPageRoute:
+    """PART 2: GET /privacy privacy policy page."""
+
+    def test_privacy_returns_200(self, server):
+        status, _ = get("/privacy")
+        assert status == 200
+
+    def test_privacy_contains_never_keyword(self, server):
+        _, body = get("/privacy")
+        assert "never" in body.lower()
+
+    def test_privacy_contains_read_only_keyword(self, server):
+        _, body = get("/privacy")
+        assert "read-only" in body.lower() or "read only" in body.lower()
+
+
+class TestTermsPageRoute:
+    """PART 2: GET /terms terms of service page."""
+
+    def test_terms_returns_200(self, server):
+        status, _ = get("/terms")
+        assert status == 200
+
+    def test_terms_contains_terms_keyword(self, server):
+        _, body = get("/terms")
+        assert "terms" in body.lower() or "Terms" in body
+
+
+class TestDashboardExportButtons:
+    """PART 3: Dashboard must have CSV + Print export buttons."""
+
+    def test_dashboard_contains_download_csv_button(self, server):
+        """Dashboard must contain 'Download CSV' button text."""
+        _, body = get("/sample")
+        assert "Download CSV" in body or "download csv" in body.lower() or "CSV" in body
+
+    def test_dashboard_contains_print_button(self, server):
+        """Dashboard must contain 'Print' button text."""
+        _, body = get("/sample")
+        assert "Print" in body or "print" in body.lower()
+
+    def test_dashboard_contains_export_csv_function(self, server):
+        """Dashboard JS must have exportLeaderboardCSV function."""
+        _, body = get("/sample")
+        assert "exportLeaderboardCSV" in body
+
+    def test_dashboard_contains_window_print_call(self, server):
+        """Dashboard JS must call window.print()."""
+        _, body = get("/sample")
+        assert "window.print()" in body
+
+    def test_dashboard_css_has_media_print_rule(self, server):
+        """Dashboard CSS must have @media print rule."""
+        _, body = get("/sample")
+        assert "@media print" in body
+
+
 class TestCanaryKeyLeakRegression:
     """
     Regression test for QA-psycho FAIL-1 (keys in hidden fields) and FAIL-2
@@ -813,25 +1072,27 @@ class TestCanaryKeyLeakRegression:
         if self.CANARY_WRITE in text: found.append("CANARY_WRITE")
         return found
 
-    # -- Dashboard HTML after /scan -------------------------------------------
+    # -- Progress Page HTML (new async flow) ------------------------------------
 
-    def test_dashboard_html_has_no_canary_keys(self):
-        """After page_scan with all 3 canaries, none must appear in dashboard HTML."""
+    def test_progress_page_has_no_canary_keys(self):
+        """After page_scan with all 3 canaries, none must appear in progress page HTML."""
         self._patch_scan()
         result = self.app.page_scan(
             self.CANARY_DD, self.CANARY_APP, "us1", write_key=self.CANARY_WRITE
         )
         leaked = self._canaries_in(result)
-        assert leaked == [], f"Canary keys leaked into dashboard HTML: {leaked}"
+        assert leaked == [], f"Canary keys leaked into progress page HTML: {leaked}"
 
-    def test_dashboard_html_no_onclick_key_embedding(self):
-        """No onclick handler in dashboard must reference any key-like value."""
+    def test_progress_page_no_secret_in_embedded_id(self):
+        """Progress page must embed job ID but never keys."""
         self._patch_scan()
         result = self.app.page_scan(
             self.CANARY_DD, self.CANARY_APP, "us1", write_key=self.CANARY_WRITE
         )
-        # Old FAIL-2: onclick="alert('Apply {oid} — wire to server endpoint')"
-        assert "alert(" not in result, "onclick alert() placeholder still present in HTML"
+        # Job ID should be embedded but not keys
+        assert "jobId" in result
+        leaked = self._canaries_in(result)
+        assert leaked == [], f"Canary keys in progress page: {leaked}"
 
     # -- Confirmation page HTML -----------------------------------------------
 

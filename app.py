@@ -58,6 +58,12 @@ _protection_lock = threading.Lock()
 # Tracks last webhook call timestamp; throttles rapid requests
 _last_webhook_ts = [0.0]  # list for mutability
 
+# === PART B: Async Scan Job Infrastructure ===
+# Maps job_id -> {stage, pct, done, error, html, ts}
+# Keys (api_key, app_key, write_key) are NEVER stored — only passed to _run_scan_job
+_scan_jobs: dict = {}
+_SCAN_JOB_TTL = 600  # 10 minutes; jobs expire after this
+
 
 def _create_apply_session(api_key: str, app_key: str, site: str, write_key: str,
                           opportunities: "list | None" = None) -> str:
@@ -425,6 +431,12 @@ def html_page(title, body, extra_head=""):
   &copy; 2026 ObservaBill &middot;
   <a href="/" style="color:#6b7280;margin:0 8px;">Home</a>
   &middot;
+  <a href="/pricing" style="color:#6b7280;margin:0 8px;">Pricing</a>
+  &middot;
+  <a href="/privacy" style="color:#6b7280;margin:0 8px;">Privacy</a>
+  &middot;
+  <a href="/terms" style="color:#6b7280;margin:0 8px;">Terms</a>
+  &middot;
   <a href="/sample" style="color:#6b7280;margin:0 8px;">Sample</a>
   &middot;
   <a href="/reserve" style="color:#6b7280;margin:0 8px;">Get Alerts</a>
@@ -661,12 +673,49 @@ def page_landing():
 <div style="background: linear-gradient(to bottom, #ecfdf5, #f8fafc); padding: 48px 24px 40px;">
   <div style="max-width:860px; margin:0 auto;">
     <h1 style="font-size:2.1rem; line-height:1.25; margin-bottom:14px;">
-      Find wasted spend in your Datadog &mdash; free.
+      Cut your Datadog log bill — find the exact lines burning money
     </h1>
     <p class="subtitle">
-      We scan read-only and show you exactly what to cut and the config to fix it.
-      Zero installation. Keys used for this request only, <strong>never stored</strong>.
+      ObservaBill samples your live logs, mines the repeated patterns, and shows you which specific log lines to drop, sample, or convert — with the exact query and $/mo. Read-only. Your keys are never stored.
     </p>
+
+    <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:24px; margin-bottom:32px;">
+      <h2 style="font-size:1.2rem; margin-bottom:16px; color:#047857;">How it works</h2>
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap:16px;">
+        <div style="background:#fff; border:1px solid #d1fae5; border-radius:8px; padding:16px; text-align:center;">
+          <div style="font-size:1.8rem; font-weight:700; color:#059669; margin-bottom:8px;">1</div>
+          <p style="font-size:0.9rem; color:#475569;">Paste read-only Datadog keys</p>
+        </div>
+        <div style="background:#fff; border:1px solid #d1fae5; border-radius:8px; padding:16px; text-align:center;">
+          <div style="font-size:1.8rem; font-weight:700; color:#059669; margin-bottom:8px;">2</div>
+          <p style="font-size:0.9rem; color:#475569;">We sample + mine your log patterns</p>
+        </div>
+        <div style="background:#fff; border:1px solid #d1fae5; border-radius:8px; padding:16px; text-align:center;">
+          <div style="font-size:1.8rem; font-weight:700; color:#059669; margin-bottom:8px;">3</div>
+          <p style="font-size:0.9rem; color:#475569;">Get ranked fixes with exact $ + one-click apply</p>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px; padding:24px; margin-bottom:32px;">
+      <h2 style="font-size:1.2rem; margin-bottom:8px; color:#1e40af;">Privacy-first</h2>
+      <p style="color:#475569; font-size:0.95rem; margin-bottom:8px;">We mine masked templates, never store your raw logs. Read-only by default. Keys live in memory only, never written to disk.</p>
+    </div>
+
+    <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:24px; margin-bottom:32px;">
+      <h2 style="font-size:1.2rem; margin-bottom:16px; color:#0f172a;">Pricing</h2>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:16px;">
+          <h3 style="color:#059669; margin-bottom:8px;">Free scan</h3>
+          <p style="font-size:0.9rem; color:#475569;">One-time scan, read-only, all findings</p>
+        </div>
+        <div style="background:#fff; border:2px solid #059669; border-radius:8px; padding:16px;">
+          <h3 style="color:#059669; margin-bottom:8px;">Protection — $99/mo</h3>
+          <p style="font-size:0.9rem; color:#475569;">Continuous hourly watchdog, alerts, one-click remediation</p>
+          <a href="/pricing" style="color:#059669; font-size:0.85rem; text-decoration:none; font-weight:600;">Learn more →</a>
+        </div>
+      </div>
+    </div>
 
     <div class="trust-block">
       <span class="badge-safe">✓ Read-only by default</span>
@@ -754,26 +803,40 @@ def page_landing():
     return html_page("Find Wasted Spend in Datadog — Free", body)
 
 
-# ── page: POST /scan ──────────────────────────────────────────────────────────
-def page_scan(api_key, app_key, site, write_key=None):
-    """
-    Call savings.scan(api_key, app_key, site) → ScanResult.
-    Render ui.render_dashboard(scan, write_enabled=bool(write_key)).
-    Wrap with html_page(extra_head=DASHBOARD_CSS).
+# ── PART B: Async Scan Job Functions ──────────────────────────────────────────
 
-    SECURITY: api_key, app_key, and write_key are NEVER passed to log_event,
-    append_to_store, or echoed in any HTML response.
-    """
-    log_event("scan", site=site)  # NEVER log any key
+def _run_scan_job(job_id, api_key, app_key, site, write_key):
+    """Run savings.scan in background; update _scan_jobs[job_id] with results.
 
+    SECURITY: api_key, app_key, write_key are LOCAL params only — never stored
+    in _scan_jobs. Keys are consumed here for the scan and apply-token creation only.
+
+    Parameters
+    ----------
+    job_id    : unique job identifier (generated in page_scan)
+    api_key   : Datadog API key (never stored)
+    app_key   : Datadog Application key (never stored)
+    site      : Datadog site (e.g. "us1")
+    write_key : optional Datadog write key (never stored)
+    """
     try:
-        scan_result = savings.scan(api_key, app_key, site)
+        # Run the scan with progress callback
+        def progress_cb(stage, pct):
+            if job_id in _scan_jobs:
+                _scan_jobs[job_id]["stage"] = stage
+                _scan_jobs[job_id]["pct"] = pct
+
+        scan_result = savings.scan(api_key, app_key, site, progress_cb=progress_cb)
+
+        # Create apply token if write_key provided
         apply_token = ""
         if write_key:
             apply_token = _create_apply_session(
                 api_key, app_key, site, write_key,
                 opportunities=scan_result.get("opportunities", []),
             )
+
+        # Render dashboard
         dashboard_html = ui.render_dashboard(
             scan_result, write_enabled=bool(write_key), apply_token=apply_token
         )
@@ -790,37 +853,242 @@ def page_scan(api_key, app_key, site, write_key=None):
   {dashboard_html}
 </div>"""
         extra_head = f"<style>{ui.DASHBOARD_CSS}</style>"
-        return html_page("Savings Scan", body, extra_head=extra_head)
+        html_result = html_page("Savings Scan", body, extra_head=extra_head)
+
+        # Mark job complete with HTML
+        if job_id in _scan_jobs:
+            _scan_jobs[job_id]["html"] = html_result
+            _scan_jobs[job_id]["done"] = True
+            _scan_jobs[job_id]["pct"] = 100
+            _scan_jobs[job_id]["stage"] = "Done"
 
     except dd_client.AuthError:
-        return _error_page(
-            "Authentication Failed",
-            "Those keys were rejected — check they're valid and have "
-            "<code>usage_read</code> + <code>billing_read</code> scopes.",
-        )
+        msg = "Authentication Failed — those keys were rejected. Check they're valid and have usage_read + billing_read scopes."
+        if job_id in _scan_jobs:
+            _scan_jobs[job_id]["error"] = msg
+            _scan_jobs[job_id]["done"] = True
+
     except dd_client.PermissionError:
-        return _error_page(
-            "Permission Denied",
-            "The app key is missing required permissions. "
-            "Create a new Application Key with <code>usage_read</code> and <code>billing_read</code> scopes.",
-        )
+        msg = "Permission Denied — the app key is missing required permissions. Create a new Application Key with usage_read and billing_read scopes."
+        if job_id in _scan_jobs:
+            _scan_jobs[job_id]["error"] = msg
+            _scan_jobs[job_id]["done"] = True
+
     except dd_client.RateLimitError:
-        return _error_page(
-            "Rate Limited",
-            "Datadog rate-limited this request — try again in a minute.",
-        )
-    except dd_client.DatadogError as exc:
-        print(f"[scan-error] {type(exc).__name__}: {exc}")
-        return _error_page(
-            "Couldn't Reach Datadog",
-            "Couldn't reach Datadog. Check your network and try again.",
-        )
-    except Exception as exc:
-        print(f"[scan-error] {type(exc).__name__}: {exc}")
-        return _error_page(
-            "Unexpected Error",
-            "Something went wrong — please try again.",
-        )
+        msg = "Rate Limited — Datadog rate-limited this request. Try again in a minute."
+        if job_id in _scan_jobs:
+            _scan_jobs[job_id]["error"] = msg
+            _scan_jobs[job_id]["done"] = True
+
+    except dd_client.DatadogError:
+        msg = "Couldn't Reach Datadog — check your network and try again."
+        if job_id in _scan_jobs:
+            _scan_jobs[job_id]["error"] = msg
+            _scan_jobs[job_id]["done"] = True
+
+    except Exception:
+        msg = "Unexpected Error — something went wrong. Please try again."
+        if job_id in _scan_jobs:
+            _scan_jobs[job_id]["error"] = msg
+            _scan_jobs[job_id]["done"] = True
+
+
+def page_scan_status(job_id):
+    """GET /scan/status?id=<job_id> — return JSON with stage, pct, done, error.
+
+    SECURITY: never includes keys. If job missing or expired, returns
+    {error: "expired", done: true}.
+    """
+    if job_id not in _scan_jobs:
+        return (json.dumps({"error": "expired", "done": True}), 200)
+
+    job = _scan_jobs[job_id]
+    now = time.time()
+
+    # Purge expired jobs (last check before returning)
+    if now - job.get("ts", 0) > _SCAN_JOB_TTL:
+        del _scan_jobs[job_id]
+        return (json.dumps({"error": "expired", "done": True}), 200)
+
+    # Return only stage, pct, done, error — NEVER keys
+    return (
+        json.dumps({
+            "stage": job.get("stage", ""),
+            "pct": job.get("pct", 0),
+            "done": job.get("done", False),
+            "error": job.get("error"),  # None if no error
+        }),
+        200,
+    )
+
+
+def page_scan_result(job_id):
+    """GET /scan/result?id=<job_id> — return completed dashboard HTML or error page.
+
+    SECURITY: never includes keys. If not done, redirect to progress page.
+    """
+    if job_id not in _scan_jobs:
+        return _error_page("Session Expired", "Job not found. Please re-run the scan.")
+
+    job = _scan_jobs[job_id]
+    now = time.time()
+
+    # Check expiry
+    if now - job.get("ts", 0) > _SCAN_JOB_TTL:
+        del _scan_jobs[job_id]
+        return _error_page("Session Expired", "Job expired. Please re-run the scan.")
+
+    # If still running, show a redirect page
+    if not job.get("done", False):
+        return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="1; url=/scan/progress?id={html.escape(job_id)}"></head>
+<body>Loading...</body></html>"""
+
+    # If error, show error page
+    if job.get("error"):
+        return _error_page("Scan Failed", job["error"])
+
+    # Return the rendered dashboard HTML
+    return job.get("html", "")
+
+
+# ── page: POST /scan ──────────────────────────────────────────────────────────
+def page_scan(api_key, app_key, site, write_key=None):
+    """
+    POST /scan: Start an async scan job. Return a progress page that polls status.
+
+    SECURITY: api_key, app_key, and write_key are NEVER logged, stored, or echoed.
+    Keys are passed directly to _run_scan_job (which is local params) and never
+    appear in _scan_jobs dict or HTML.
+    """
+    log_event("scan", site=site)  # NEVER log any key
+
+    # Purge expired jobs (cleanup before creating new one)
+    now = time.time()
+    expired = [jid for jid, j in _scan_jobs.items() if now - j.get("ts", 0) > _SCAN_JOB_TTL]
+    for jid in expired:
+        del _scan_jobs[jid]
+
+    # Create job ID and initialize job record
+    job_id = secrets.token_urlsafe(16)
+    _scan_jobs[job_id] = {
+        "stage": "Starting…",
+        "pct": 0,
+        "done": False,
+        "error": None,
+        "html": None,
+        "ts": now,
+    }
+
+    # Start async scan in background thread
+    t = threading.Thread(
+        target=_run_scan_job,
+        args=(job_id, api_key, app_key, site, write_key or ""),
+        daemon=True,
+    )
+    t.start()
+
+    # Return progress page with polling JS
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scanning — ObservaBill</title>
+<style>
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+body {{
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #f8fafc;
+    color: #0f172a;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}}
+.progress-container {{
+    max-width: 500px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 40px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    text-align: center;
+}}
+h1 {{
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 12px;
+    color: #0f172a;
+}}
+#stage {{
+    color: #475569;
+    font-size: 1rem;
+    margin-bottom: 24px;
+    min-height: 24px;
+}}
+.progress-bar {{
+    width: 100%;
+    height: 8px;
+    background: #e2e8f0;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 16px;
+}}
+.progress-fill {{
+    height: 100%;
+    background: #059669;
+    width: 0%;
+    transition: width 0.3s ease;
+}}
+#pct {{
+    color: #64748b;
+    font-size: 0.9rem;
+}}
+</style>
+</head>
+<body>
+<div class="progress-container">
+  <h1>Scanning Your Datadog…</h1>
+  <div id="stage">Starting…</div>
+  <div class="progress-bar">
+    <div class="progress-fill" id="fill"></div>
+  </div>
+  <div id="pct">0%</div>
+</div>
+<script>
+const jobId = {json.dumps(job_id)};
+const pollIntervalMs = 1200;
+
+async function pollStatus() {{
+    try {{
+        const resp = await fetch('/scan/status?id=' + encodeURIComponent(jobId));
+        const data = await resp.json();
+
+        document.getElementById('stage').textContent = data.stage || '';
+        document.getElementById('pct').textContent = Math.round(data.pct) + '%';
+        document.getElementById('fill').style.width = Math.min(100, data.pct) + '%';
+
+        if (data.done) {{
+            if (data.error) {{
+                alert('Error: ' + data.error);
+                window.location = '/';
+            }} else {{
+                window.location = '/scan/result?id=' + encodeURIComponent(jobId);
+            }}
+        }} else {{
+            setTimeout(pollStatus, pollIntervalMs);
+        }}
+    }} catch (e) {{
+        console.error('Poll failed:', e);
+        setTimeout(pollStatus, pollIntervalMs);
+    }}
+}}
+
+pollStatus();
+</script>
+</body>
+</html>"""
 
 
 # ── page: POST /apply ─────────────────────────────────────────────────────────
@@ -1141,6 +1409,147 @@ def page_reserve_form():
     return html_page("Reserve Alerts", body)
 
 
+# ── page: GET /pricing ────────────────────────────────────────────────────────
+def page_pricing():
+    """Pricing tier page (Free scan vs $99/mo Protection)."""
+    body = """
+<div class="container" style="max-width:960px;">
+  <div style="margin-top:48px; margin-bottom:40px;">
+    <h1>Simple, Transparent Pricing</h1>
+    <p class="subtitle">Choose the plan that fits your team.</p>
+  </div>
+
+  <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:28px; margin-bottom:48px;">
+    <div class="card">
+      <h2 style="color:#059669; margin-bottom:12px;">Free Scan</h2>
+      <div style="font-size:2rem; font-weight:700; color:#0f172a; margin-bottom:16px;">$0</div>
+      <ul style="list-style:none; margin-bottom:24px; color:#475569;">
+        <li style="margin-bottom:10px;">✓ One-time scan</li>
+        <li style="margin-bottom:10px;">✓ Read-only access</li>
+        <li style="margin-bottom:10px;">✓ All findings + fix queries</li>
+        <li style="margin-bottom:10px;">✓ No account needed</li>
+        <li style="margin-bottom:10px;">✓ Download CSV export</li>
+      </ul>
+      <a href="/" class="btn btn-primary" style="width:100%;">Start Scanning →</a>
+    </div>
+
+    <div class="card" style="border:2px solid #059669; box-shadow: 0 8px 24px rgba(5,150,105,0.15);">
+      <div style="background:#f0fdf4; border-radius:6px; padding:8px 14px; display:inline-block; margin-bottom:12px;">
+        <span style="color:#059669; font-weight:700; font-size:0.8rem;">POPULAR</span>
+      </div>
+      <h2 style="color:#059669; margin-bottom:12px;">Protection</h2>
+      <div style="font-size:2rem; font-weight:700; color:#0f172a; margin-bottom:4px;">$99<span style="font-size:0.5em; color:#64748b;">/month</span></div>
+      <p style="color:#64748b; font-size:0.9rem; margin-bottom:16px;">Billed monthly. Cancel anytime.</p>
+      <ul style="list-style:none; margin-bottom:24px; color:#475569;">
+        <li style="margin-bottom:10px;">✓ Continuous hourly watchdog</li>
+        <li style="margin-bottom:10px;">✓ Surge alerts (email + Slack)</li>
+        <li style="margin-bottom:10px;">✓ One-click remediations</li>
+        <li style="margin-bottom:10px;">✓ Monthly breakdown report</li>
+        <li style="margin-bottom:10px;">✓ Auto-protection guardrails</li>
+      </ul>
+      <a href="/reserve" class="btn btn-primary" style="width:100%;">Reserve Your Spot →</a>
+    </div>
+  </div>
+
+  <div class="card" style="background:#f8fafc; border-color:#d1fae5;">
+    <h3>Frequently Asked</h3>
+    <div style="margin-top:16px;">
+      <p style="color:#0f172a; font-weight:600; margin-bottom:6px;">Can I try Protection first?</p>
+      <p style="color:#475569; margin-bottom:16px;">Yes! Reserve a spot and we'll give you a trial period to verify the tool works with your Datadog account.</p>
+
+      <p style="color:#0f172a; font-weight:600; margin-bottom:6px;">Is there a contract?</p>
+      <p style="color:#475569; margin-bottom:16px;">No. Monthly billing with cancel-anytime. Your remediation guardrails stay in your hands.</p>
+
+      <p style="color:#0f172a; font-weight:600; margin-bottom:6px;">What if I only need one scan?</p>
+      <p style="color:#475569;">The Free Scan is perfect for one-time audits. No account, no commitment.</p>
+    </div>
+  </div>
+
+  <div style="text-align:center; margin-top:40px;">
+    <a href="/" class="btn btn-outline">← Back to Scan</a>
+  </div>
+</div>"""
+    return html_page("Pricing", body)
+
+
+# ── page: GET /privacy ─────────────────────────────────────────────────────────
+def page_privacy():
+    """Privacy policy."""
+    body = """
+<div class="container" style="max-width:860px;">
+  <div style="margin-top:48px; margin-bottom:40px;">
+    <h1>Privacy Policy</h1>
+  </div>
+
+  <div class="card">
+    <h2>Read-Only Access</h2>
+    <p>ObservaBill accesses your Datadog account using read-only API scopes (<code>usage_read</code> and <code>billing_read</code>) only. We never request write access unless you explicitly provide a write key for remediation.</p>
+
+    <h2 style="margin-top:24px;">Keys Are Never Stored</h2>
+    <p>Your API keys, Application keys, and write keys exist in memory only during your scan. They are never written to disk, logged, or persisted in any database. Once your scan completes, all keys are discarded.</p>
+
+    <h2 style="margin-top:24px;">Log Data is Sampled, Not Stored</h2>
+    <p>ObservaBill samples your live logs to detect cost patterns and anomalies. We create masked templates (removing sensitive values) and process these in memory. Raw log data is never persisted. Only aggregated findings and template metadata are retained.</p>
+
+    <h2 style="margin-top:24px;">Findings Are Yours</h2>
+    <p>Scan results (cost summaries, pattern templates, and recommendations) are returned to you immediately and deleted after your session expires. You can download findings as CSV or print them for your records.</p>
+
+    <h2 style="margin-top:24px;">TLS Encryption</h2>
+    <p>All communication with Datadog and ObservaBill uses TLS 1.2+ encryption in transit.</p>
+
+    <h2 style="margin-top:24px;">Questions?</h2>
+    <p>Contact us at <a href="mailto:privacy@observabill.com" style="color:#059669;">privacy@observabill.com</a> with privacy concerns.</p>
+  </div>
+
+  <div style="text-align:center; margin-top:40px;">
+    <a href="/" class="btn btn-outline">← Back to Home</a>
+  </div>
+</div>"""
+    return html_page("Privacy Policy", body)
+
+
+# ── page: GET /terms ───────────────────────────────────────────────────────────
+def page_terms():
+    """Terms of Service."""
+    body = """
+<div class="container" style="max-width:860px;">
+  <div style="margin-top:48px; margin-bottom:40px;">
+    <h1>Terms of Service</h1>
+  </div>
+
+  <div class="card">
+    <h2>Use License</h2>
+    <p>ObservaBill is provided as-is for auditing and optimizing your Datadog costs. You retain full ownership of your Datadog account and all data within it.</p>
+
+    <h2 style="margin-top:24px;">No Warranty</h2>
+    <p>ObservaBill is provided without warranty. Findings are estimates based on sampled data and historical trends. Always test cost optimizations in a non-production environment first. You are responsible for validating any changes to your Datadog configuration.</p>
+
+    <h2 style="margin-top:24px;">Read-Only Tool</h2>
+    <p>By default, ObservaBill operates in read-only mode. If you choose to enable one-click Apply functionality, you must provide a write-capable key scoped to the specific remediation endpoints. You remain responsible for all changes made to your Datadog account.</p>
+
+    <h2 style="margin-top:24px;">Your Responsibility</h2>
+    <p>You are responsible for:</p>
+    <ul style="margin-left:20px; color:#475569;">
+      <li>Managing your Datadog API and Application keys securely</li>
+      <li>Verifying all cost recommendations before applying them</li>
+      <li>Monitoring your Datadog bill during and after optimizations</li>
+      <li>Complying with your organization's change control policies</li>
+    </ul>
+
+    <h2 style="margin-top:24px;">Limitation of Liability</h2>
+    <p>ObservaBill is not liable for any indirect, incidental, or consequential damages arising from the use of this tool, including but not limited to lost revenue or data loss due to misconfigured cost optimizations.</p>
+
+    <h2 style="margin-top:24px;">Termination</h2>
+    <p>We reserve the right to suspend or terminate your access if you violate these terms or use the tool for unauthorized purposes.</p>
+  </div>
+
+  <div style="text-align:center; margin-top:40px;">
+    <a href="/" class="btn btn-outline">← Back to Home</a>
+  </div>
+</div>"""
+    return html_page("Terms of Service", body)
+
+
 # ── page: GET /breakdown — secondary bill-breakdown form ──────────────────────
 def page_breakdown_form():
     """Old-style bill breakdown entry form (now secondary, not the primary landing)."""
@@ -1449,6 +1858,14 @@ class ObservaBillHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(encoded)
 
+    def send_json(self, data, status=200):
+        encoded = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.end_headers()
+        self.wfile.write(encoded)
+
     def send_redirect(self, location):
         self.send_response(302)
         self.send_header("Location", location)
@@ -1475,6 +1892,15 @@ class ObservaBillHandler(http.server.BaseHTTPRequestHandler):
             log_event("visit", ref=ref)
             self.send_html(page_landing())
 
+        elif path == "/pricing":
+            self.send_html(page_pricing())
+
+        elif path == "/privacy":
+            self.send_html(page_privacy())
+
+        elif path == "/terms":
+            self.send_html(page_terms())
+
         elif path == "/sample":
             # page_sample() calls log_event("sample_view") internally
             self.send_html(page_sample())
@@ -1491,6 +1917,16 @@ class ObservaBillHandler(http.server.BaseHTTPRequestHandler):
 
         elif path == "/protection":
             self.send_html(page_protection_get())
+
+        elif path == "/scan/status":
+            job_id = qs.get("id", [""])[0]
+            body, status = page_scan_status(job_id)
+            self.send_json(json.loads(body), status)
+
+        elif path == "/scan/result":
+            job_id = qs.get("id", [""])[0]
+            result = page_scan_result(job_id)
+            self.send_html(result)
 
         else:
             self.send_html(

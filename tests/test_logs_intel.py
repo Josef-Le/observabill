@@ -1075,3 +1075,146 @@ class TestLeaderboardRenderRegressions:
         h = ui.render_pattern_leaderboard(self._scan(), write_enabled=False, apply_token="")
         assert "Advisory" in h                      # review rows give guidance, not a dead badge
         assert "Exact Datadog query" in h
+
+
+# ---------------------------------------------------------------------------
+# Dashboard premium polish: ROI banner, trust nudge, methodology, empty states
+# ---------------------------------------------------------------------------
+
+class TestLeaderboardRenderRegressions:
+    """UI regression tests for dashboard premium polish (ROI banner, trust nudge, etc.)."""
+
+    def test_roi_banner_shows_annual_savings(self):
+        """render_dashboard with SAMPLE_SCAN includes ROI banner with /yr and $99."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert "/yr" in h, "ROI banner should show annual savings (/yr)"
+        assert "$99" in h, "ROI banner should mention $99/mo subscription"
+
+    def test_roi_banner_shows_lean_message_when_zero_waste(self):
+        """render_dashboard with total_monthly_waste=0 shows 'lean' message."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        scan["total_monthly_waste_usd"] = 0
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        # Should show encouraging "No recoverable waste" or "lean" message
+        assert "No recoverable waste" in h or "lean" in h.lower(), \
+            "Dashboard should show friendly empty state for zero waste"
+
+    def test_roi_banner_has_data_usd_attribute(self):
+        """render_dashboard ROI banner includes data-usd for client-side price rescaling."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert "data-usd" in h and "data-price-key" in h, \
+            "Dashboard should have data-usd + data-price-key for dynamic pricing"
+
+    def test_trust_nudge_derived_shows_actual_bill_message(self):
+        """render_dashboard with price_source='derived' shows 'derived from your actual bill'."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        scan["price_source"] = "derived"
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert "derived from your actual" in h, \
+            "Dashboard should show trust nudge for 'derived' price source"
+
+    def test_trust_nudge_list_shows_set_real_rate_link(self):
+        """render_dashboard with price_source='list' shows 'Set your real rate' link."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        scan["price_source"] = "list"
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert "Set your real rate" in h, \
+            "Dashboard should show trust nudge to set real price for 'list' source"
+
+    def test_methodology_line_present_with_lines_examined(self):
+        """render_dashboard includes methodology line with lines_examined number."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        lines_examined = scan.get("lines_examined", 0)
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert f"{lines_examined:,}" in h, \
+            f"Dashboard should show lines_examined count ({lines_examined})"
+        assert "sampled" in h.lower() or "clustered" in h.lower(), \
+            "Dashboard should mention sampling/clustering in methodology"
+
+    def test_surge_empty_state_friendly(self):
+        """render_dashboard with surges=[] shows friendly 'stable' message, not bare line."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        scan["surges"] = []
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert "stable" in h.lower(), \
+            "Dashboard should show friendly 'No surges — stable' message"
+
+    def test_surge_present_shows_content(self):
+        """render_dashboard with surges present shows surge content, not empty state."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        scan["surges"] = [
+            {
+                "kind": "spike",
+                "series": "api.requests",
+                "onset_date": "2026-06-22",
+                "latest": 5000,
+                "baseline_mean": 1000,
+                "sigma": 4.5,
+                "monthly_cost_usd": 500.0,
+                "template": "request spike <NUM>",
+            }
+        ]
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert "stable" not in h.lower() or "Surge" in h, \
+            "Dashboard should show surge content when surges present"
+
+    def test_no_regression_most_expensive_pattern_text(self):
+        """render_dashboard still contains 'MOST EXPENSIVE' text from hero."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert "MOST EXPENSIVE" in h, \
+            "Dashboard should retain hero 'MOST EXPENSIVE' text (no regression)"
+
+    def test_no_regression_bill_share_text(self):
+        """render_dashboard still contains 'of your log bill' text."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert "log bill" in h or "bill" in h, \
+            "Dashboard should retain 'log bill' text (no regression)"
+
+    def test_no_api_key_in_html(self):
+        """render_dashboard never exposes API keys, app keys, or write keys."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="test-token-12345")
+        # API keys are typically long hex or alphanumeric patterns
+        # We check that common key patterns don't appear
+        assert "AKIA" not in h, "AWS key pattern should not appear"
+        assert "sk_" not in h, "Stripe-like pattern should not appear"
+        # apply_token may appear in hidden fields but not in visible text
+        # simple check: if token appears, it should be in a hidden input
+        if "test-token-12345" in h:
+            # If it appears, it should be in a hidden field
+            assert "type=\"hidden\"" in h and "test-token-12345" in h, \
+                "Token should only appear in hidden form fields if at all"
+
+    def test_similar_families_omitted_when_empty(self):
+        """render_dashboard omits similar_families section entirely when empty."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        scan["similar_families"] = []
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        # The section should be omitted (empty string returned by render_similar_families)
+        # So we shouldn't see the heading twice or see "Similar Pattern Families" multiple times
+        count = h.count("Similar Pattern Families")
+        assert count <= 1, "similar_families section should not appear when empty"
+
+    def test_dashboard_output_length_reasonable(self):
+        """render_dashboard output is reasonably large (>40000 chars with sample data)."""
+        import ui, fixtures, copy
+        scan = copy.deepcopy(fixtures.SAMPLE_SCAN)
+        h = ui.render_dashboard(scan, write_enabled=False, apply_token="")
+        assert len(h) > 40000, \
+            f"Dashboard output should be substantial (got {len(h)} chars, need >40000)"

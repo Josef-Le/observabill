@@ -867,6 +867,7 @@ def scan(
     app_key: str,
     site: str = "us1",
     prices: "dict[str, float] | None" = None,
+    progress_cb: "None | callable" = None,
 ) -> dict:
     """Run all detectors and return a ScanResult.
 
@@ -880,12 +881,22 @@ def scan(
     site     : Datadog site (e.g. "us1", "eu")
     prices   : optional pricing override. If None, derives prices from billing
                data (best-effort). Pass a dict to use custom prices.
+    progress_cb : optional callback(stage: str, pct: float) for progress tracking
 
     Returns
     -------
     ScanResult dict with additional keys: scope_check, price_source.
     """
+    def _report(stage: str, pct: int | float):
+        """Call progress_cb safely, swallowing exceptions."""
+        if progress_cb:
+            try:
+                progress_cb(stage, pct)
+            except Exception:
+                pass
+
     notes: list[str] = []
+    _report("Checking API access", 8)
 
     # --- Step 1: Preflight scope check ---
     scope_check: dict = {}
@@ -925,6 +936,8 @@ def scan(
         price_result = derive_effective_prices(estimated_cost_json, usage_for_pricing)
         effective_prices = price_result["prices"]
         price_source = price_result["source"]
+
+    _report("Reading log volume", 22)
 
     # --- Fetch logs data ---
     logs_aggregate: dict = {}
@@ -1006,6 +1019,8 @@ def scan(
     # Gate on logs_read_data scope
     scope_gate = not scope_check.get("logs_read_data", False)
 
+    _report("Sampling your live logs", 38)
+
     # POOLED SAMPLING: single sample across entire account (unless scope_gate)
     if not scope_gate and log_cost_map:
         now = datetime.now(timezone.utc)
@@ -1021,6 +1036,7 @@ def scan(
 
             if sampled:
                 # Orchestrate: mine patterns, classify, rank opportunities
+                _report("Mining message templates", 62)
                 res = logs_intel.analyze_patterns(
                     events,
                     sample_size=lines_examined,
@@ -1052,6 +1068,8 @@ def scan(
         similar_families = []
         field_bloat = []
         bill_share_pct = 0.0
+
+    _report("Detecting surges", 80)
 
     # SURGES: combine per-service anomalies + per-pattern surges
     # (a) Per-service timeseries anomalies
@@ -1107,6 +1125,8 @@ def scan(
     surges.sort(key=lambda a: a.get("severity", 0), reverse=True)
     surges = surges[:12]  # cap at 12
 
+    _report("Analyzing fields & metrics", 92)
+
     # Build opportunities list: patterns + field-bloat + high-cardinality + index-quota
     opportunities: list[dict] = list(pattern_opps)
 
@@ -1143,6 +1163,8 @@ def scan(
         "uk1": "uk",
     }
     region = _site_to_region.get(site, site)
+
+    _report("Done", 100)
 
     return {
         "total_monthly_waste_usd": total_waste,

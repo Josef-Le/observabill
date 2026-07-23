@@ -1111,6 +1111,16 @@ pre.detection-query {
     gap: 10px;
 }
 .no-content-notice .notice-icon { flex-shrink: 0; font-size: 1.1rem; }
+
+@media print {
+    .nav { display: none; }
+    footer { display: none; }
+    button { display: none; }
+    .settings-link { display: none; }
+    body { background: white; }
+    .hero-card { break-inside: avoid; }
+    .lever-table-wrap { break-inside: avoid; page-break-after: auto; }
+}
 """
 
 
@@ -1316,6 +1326,59 @@ document.addEventListener('DOMContentLoaded', function() {
         if (el && val !== null) el.value = val;
     });
 });
+
+// ── Export leaderboard to CSV ─────────────────────────────────────────────────
+function exportLeaderboardCSV() {
+    var table = document.getElementById('lb-table');
+    if (!table) return;
+
+    var rows = [];
+    var headerRow = ['Rank', 'Template', 'Services', '$/mo', '$/yr', '% Bill', 'Action'];
+    rows.push(headerRow);
+
+    // Extract visible rows from the table body
+    var tbody = table.querySelector('tbody');
+    if (!tbody) return;
+
+    var trs = tbody.querySelectorAll('tr:not([id^="lbdd-"])');
+    trs.forEach(function(tr, idx) {
+        var cells = tr.querySelectorAll('td');
+        if (cells.length >= 7) {
+            var row = [
+                (idx + 1).toString(),  // Rank
+                (cells[1].textContent || '').trim(),  // Template
+                (cells[2].textContent || '').trim(),  // Services
+                (cells[3].textContent || '').trim(),  // $/mo
+                (cells[4].textContent || '').trim(),  // $/yr
+                (cells[5].textContent || '').trim(),  // % Bill
+                (cells[6].textContent || '').trim()   // Action
+            ];
+            rows.push(row);
+        }
+    });
+
+    // Convert to CSV
+    var csv = rows.map(function(r) {
+        return r.map(function(cell) {
+            // Escape quotes and wrap in quotes if contains comma
+            var escaped = cell.replace(/"/g, '""');
+            if (escaped.indexOf(',') >= 0 || escaped.indexOf('"') >= 0 || escaped.indexOf('\\n') >= 0) {
+                return '"' + escaped + '"';
+            }
+            return escaped;
+        }).join(',');
+    }).join('\\n');
+
+    // Download
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    var link = document.createElement('a');
+    link.setAttribute('href', URL.createObjectURL(blob));
+    link.setAttribute('download', 'observabill-leaderboard.csv');
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
 </script>
 """
 
@@ -2823,8 +2886,12 @@ def render_pattern_leaderboard(scan: dict, write_enabled: bool, apply_token: str
 </tr>"""
 
     return f"""
+<div style="margin-bottom:16px; display:flex; gap:8px; flex-wrap:wrap;">
+  <button type="button" onclick="exportLeaderboardCSV()" class="btn btn-outline" style="font-size:0.85rem; padding:7px 14px;">⬇ Download CSV</button>
+  <button type="button" onclick="window.print()" class="btn btn-outline" style="font-size:0.85rem; padding:7px 14px;">🖨 Print report</button>
+</div>
 <div class="lever-table-wrap">
-<table style="width:100%;border-collapse:collapse;">
+<table id="lb-table" style="width:100%;border-collapse:collapse;">
   <thead>
     <tr style="background:#f1f5f9;border-bottom:1px solid #e2e8f0;">
       <th style="padding:11px 14px;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;text-align:center;width:40px;">#</th>
@@ -2923,6 +2990,99 @@ border-radius:10px;padding:16px 18px;margin-bottom:12px;">
         f'<div style="margin-bottom:28px;">'
         f'<h2 style="margin:0 0 18px 0;font-size:1.1rem;font-weight:700;color:#0f172a;">Surge Detector — patterns growing or newly appeared</h2>'
         f'{"".join(cards)}'
+        f'</div>'
+    )
+
+
+def render_roi_banner(scan: dict) -> str:
+    """
+    ROI banner: placed right below hero. Shows annual savings recovery potential
+    and subscription cost comparison. Friendly empty state when total is 0.
+
+    Compute: annual = total_monthly_waste_usd * 12
+    Copy: "💰 You could recover **{annual}/yr** — ObservaBill continuous protection is $99/mo.
+    This scan alone found {N}× your subscription." (N = round(annual / (99*12)) if ≥1)
+
+    Data-usd on $ for client-side price rescale.
+    """
+    total = float(scan.get("total_monthly_waste_usd", 0))
+    annual = total * 12
+
+    if annual == 0:
+        # Friendly "lean" empty state
+        return (
+            f'<div style="padding:18px 22px;background:#f0fdf4;border:1px solid #bbf7d0;'
+            f'border-radius:10px;font-size:0.85rem;color:#166534;margin-bottom:28px;">'
+            f'<strong>✓</strong> No recoverable waste found — your logging looks lean.</div>'
+        )
+
+    # Compute N (subscription multiples)
+    sub_annual_cost = 99 * 12  # $1188/yr
+    n_multiples = round(annual / sub_annual_cost) if annual > 0 else 0
+
+    # Build the copy
+    if n_multiples >= 1:
+        multiple_text = f" This scan alone found <strong>{n_multiples}×</strong> your subscription."
+    else:
+        multiple_text = ""
+
+    roi_copy = (
+        f"💰 You could recover <strong>{_fmt_usd(annual)}/yr</strong> — "
+        f"ObservaBill continuous protection is $99/mo.{multiple_text}"
+    )
+
+    # Green gradient styling (consistent with hero)
+    return (
+        f'<div style="padding:16px 20px;background:linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);'
+        f'border:1px solid #6ee7b7;border-radius:10px;margin-bottom:28px;">'
+        f'<div style="font-size:0.88rem;color:#065f46;line-height:1.5;">'
+        f'{roi_copy}'
+        f'<span class="data-usd" data-usd="{annual}" data-price-key="indexed_log_per_million" '
+        f'style="display:none;"></span>'
+        f'</div>'
+        f'</div>'
+    )
+
+
+def render_trust_nudge(scan: dict) -> str:
+    """
+    Trust nudge: muted line near stats/ROI.
+    If price_source != 'derived' and no billing → "Estimated at list price ($1.70/M).
+    ⚙ Set your real rate for exact dollars." (link to settings)
+    If price_source == 'derived' → "Dollars derived from your actual Datadog bill."
+
+    Returns empty string if price_source is 'derived' (or omitted).
+    """
+    price_source = scan.get("price_source", "list")
+
+    if price_source == "derived":
+        return (
+            f'<div style="font-size:0.80rem;color:#64748b;margin-bottom:16px;text-align:center;">'
+            f'✓ Dollars derived from your actual Datadog bill.'
+            f'</div>'
+        )
+
+    # List price or custom — show nudge
+    return (
+        f'<div style="font-size:0.80rem;color:#64748b;margin-bottom:16px;text-align:center;">'
+        f'Estimated at list price ($1.70 / million indexed logs). '
+        f'<a href="#" onclick="openSettings(); return false;" style="color:#059669;font-weight:600;'
+        f'text-decoration:none;">⚙ Set your real rate</a> for exact dollars.'
+        f'</div>'
+    )
+
+
+def render_methodology_line(scan: dict) -> str:
+    """
+    Methodology one-liner under leaderboard heading.
+    "We sampled {lines_examined:,} live log lines, clustered them into templates,
+    and ranked by cost. Representative sample — big services dominate cost."
+    """
+    lines_examined = scan.get("lines_examined", 0)
+    return (
+        f'<div style="font-size:0.82rem;color:#64748b;margin-bottom:16px;font-style:italic;">'
+        f'We sampled {lines_examined:,} live log lines, clustered them into templates, '
+        f'and ranked by cost. Representative sample — big services dominate cost.'
         f'</div>'
     )
 
@@ -3092,6 +3252,12 @@ def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str =
             f'</div>'
         )
 
+    # ROI BANNER (new)
+    roi_html = render_roi_banner(scan)
+
+    # TRUST NUDGE (new)
+    trust_nudge_html = render_trust_nudge(scan)
+
     # 3. STATS BAR
     n_patterns = len(leaderboard)
     total_waste = float(scan.get("total_monthly_waste_usd", 0))
@@ -3124,9 +3290,12 @@ def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str =
     # 4. LEADERBOARD CENTERPIECE
     leaderboard_html = ""
     if leaderboard:
+        # METHODOLOGY LINE (new)
+        methodology_html = render_methodology_line(scan)
         leaderboard_heading = (
             f'<div style="margin-bottom:18px;">'
             f'<h2 style="margin:0;font-size:1.05rem;font-weight:700;color:#0f172a;">These {len(leaderboard)} lines are {bill_share:.0f}% of your log bill</h2>'
+            f'{methodology_html}'
             f'</div>'
         )
         leaderboard_html = leaderboard_heading + render_pattern_leaderboard(scan, write_enabled, apply_token)
@@ -3174,6 +3343,8 @@ def render_dashboard(scan: dict, write_enabled: bool = False, apply_token: str =
         settings_html,
         '<div class="container-wide" style="padding-top:32px;">',
         hero_html,
+        roi_html,
+        trust_nudge_html,
         scope_gate_html,
         stats_html,
         '<div id="leaderboard"></div>',
